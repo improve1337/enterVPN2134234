@@ -1,0 +1,39 @@
+# Вариант для VPS. На Bothost этот файл не нужен — там достаточно Dockerfile.
+#
+#   docker compose up -d --build     # собрать и запустить
+#   docker compose logs -f           # смотреть логи
+#   docker compose down              # остановить
+#
+# BOT_TOKEN, ADMIN_IDS и прочее берутся из файла .env рядом с этим файлом:
+# compose читает его автоматически для подстановки ${...}.
+#
+# ВАЖНО: DATABASE_PATH ниже жёстко указывает на persistent-том. Если задать
+# его в .env как ./data/bot.db, база будет стираться при каждом передеплое.
+
+services:
+  bot:
+    build: .
+    image: entervpn-bot
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN:?BOT_TOKEN не задан — заполните .env}
+      BOT_USERNAME: ${BOT_USERNAME:-}
+      ADMIN_IDS: ${ADMIN_IDS:-}
+      BRAND_NAME: ${BRAND_NAME:-EnterVPN}
+      BOT_MODE: ${BOT_MODE:-polling}
+      PORT: ${PORT:-3000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MOCK_MODE: ${MOCK_MODE:-true}
+      # Пустая строка = прокси выключен (код это корректно игнорирует).
+      TELEGRAM_PROXY: ${TELEGRAM_PROXY:-}
+      NODE_ENV: production
+      DATABASE_PATH: /app/data/bot.db
+      BANNER_PATH: /usr/src/app/assets/welcome.png
+    # Порт нужен только для /health и /api/*. Для polling-бота его можно убрать.
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      - bot-data:/app/data
+
+volumes:
+  bot-data:
