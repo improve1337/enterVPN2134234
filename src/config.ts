@@ -92,6 +92,3 @@ export const config = {
   mockLandingUrl: env.MOCK_LANDING_URL,
   botUsername: env.BOT_USERNAME,
 } as const;
-
-export const isAdmin = (telegramId: number): boolean =>
-  config.adminIds.includes(telegramId);

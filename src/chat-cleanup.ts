@@ -12,6 +12,8 @@
 export interface MessageTracker {
   /** Запоминает сообщение, чтобы удалить его при следующем действии. */
   remember(chatId: number, messageId: number): void;
+  /** Убирает сообщение из списка: оно должно остаться в чате. */
+  forget(chatId: number, messageId: number): void;
   /** Отдаёт запомненные сообщения и очищает список для этого чата. */
   take(chatId: number): number[];
 }
@@ -27,6 +29,13 @@ export const createMessageTracker = (): MessageTracker => {
         return;
       }
       if (!ids.includes(messageId)) ids.push(messageId);
+    },
+
+    forget(chatId, messageId) {
+      const ids = byChat.get(chatId);
+      if (ids === undefined) return;
+      const index = ids.indexOf(messageId);
+      if (index !== -1) ids.splice(index, 1);
     },
 
     take(chatId) {

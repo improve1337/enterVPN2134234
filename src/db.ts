@@ -47,6 +47,28 @@ CREATE TABLE IF NOT EXISTS audit_log (
   entity     TEXT,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS admins (
+  telegram_id INTEGER PRIMARY KEY,
+  added_by    INTEGER,
+  created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_states (
+  telegram_id INTEGER PRIMARY KEY,
+  state       TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_messages (
+  admin_chat_id    INTEGER NOT NULL,
+  admin_message_id INTEGER NOT NULL,
+  user_id          INTEGER NOT NULL,
+  created_at       TEXT NOT NULL,
+  PRIMARY KEY (admin_chat_id, admin_message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_user ON support_messages(user_id);
 `;
 
 /** Путь к БД может лежать в ещё не созданной папке (./data). */
@@ -309,6 +331,8 @@ export function stats(): {
   activeSubscriptions: number;
   pendingOrders: number;
   paidOrders: number;
+  admins: number;
+  supportTickets: number;
 } {
   const one = (sql: string, ...params: (string | number)[]): number => {
     const row = raw.prepare(sql).get(...params) as { c: number } | undefined;
@@ -326,7 +350,95 @@ export function stats(): {
     paidOrders: one(
       "SELECT COUNT(*) AS c FROM orders WHERE status IN ('paid','active')",
     ),
+    admins: one("SELECT COUNT(*) AS c FROM admins"),
+    supportTickets: one(
+      "SELECT COUNT(DISTINCT user_id) AS c FROM support_messages",
+    ),
   };
+}
+
+// --- Админы, состояния диалога и обращения в поддержку ---
+
+/** Состояние диалога: чего бот ждёт от следующего сообщения пользователя. */
+export type UserState = "support" | "admin_add";
+
+export function addAdmin(telegramId: number, addedBy: number | null): void {
+  raw
+    .prepare(
+      `INSERT INTO admins (telegram_id, added_by, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(telegram_id) DO NOTHING`,
+    )
+    .run(telegramId, addedBy, nowIso());
+}
+
+export function removeAdmin(telegramId: number): void {
+  raw.prepare("DELETE FROM admins WHERE telegram_id = ?").run(telegramId);
+}
+
+export function isDbAdmin(telegramId: number): boolean {
+  const row = raw
+    .prepare("SELECT 1 AS ok FROM admins WHERE telegram_id = ?")
+    .get(telegramId) as { ok: number } | undefined;
+  return row !== undefined;
+}
+
+/** ID админов, назначенных через панель (без учёта ADMIN_IDS из окружения). */
+export function listAdminIds(): number[] {
+  const rows = raw
+    .prepare("SELECT telegram_id FROM admins ORDER BY created_at")
+    .all() as unknown as { telegram_id: number }[];
+  return rows.map((row) => Number(row.telegram_id));
+}
+
+export function setUserState(telegramId: number, state: UserState): void {
+  raw
+    .prepare(
+      `INSERT INTO user_states (telegram_id, state, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(telegram_id)
+       DO UPDATE SET state = excluded.state, created_at = excluded.created_at`,
+    )
+    .run(telegramId, state, nowIso());
+}
+
+export function getUserState(telegramId: number): UserState | undefined {
+  const row = raw
+    .prepare("SELECT state FROM user_states WHERE telegram_id = ?")
+    .get(telegramId) as { state: string } | undefined;
+  return row ? (row.state as UserState) : undefined;
+}
+
+export function clearUserState(telegramId: number): void {
+  raw.prepare("DELETE FROM user_states WHERE telegram_id = ?").run(telegramId);
+}
+
+/** Связывает сообщение в чате админа с пользователем, который его написал. */
+export function saveSupportMessage(
+  adminChatId: number,
+  adminMessageId: number,
+  userId: number,
+): void {
+  raw
+    .prepare(
+      `INSERT INTO support_messages (admin_chat_id, admin_message_id, user_id, created_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(admin_chat_id, admin_message_id)
+       DO UPDATE SET user_id = excluded.user_id`,
+    )
+    .run(adminChatId, adminMessageId, userId, nowIso());
+}
+
+/** По сообщению, на которое ответил админ, находит автора обращения. */
+export function findSupportUserId(
+  adminChatId: number,
+  adminMessageId: number,
+): number | undefined {
+  const row = raw
+    .prepare(
+      `SELECT user_id FROM support_messages
+       WHERE admin_chat_id = ? AND admin_message_id = ?`,
+    )
+    .get(adminChatId, adminMessageId) as { user_id: number } | undefined;
+  return row ? Number(row.user_id) : undefined;
 }
 
 export function closeDatabase(): void {

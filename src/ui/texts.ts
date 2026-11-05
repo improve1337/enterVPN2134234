@@ -166,6 +166,8 @@ export const adminStatsText = (data: {
   activeSubscriptions: number;
   pendingOrders: number;
   paidOrders: number;
+  admins: number;
+  supportTickets: number;
 }): string =>
   [
     "🛠 *Статистика*",
@@ -174,6 +176,78 @@ export const adminStatsText = (data: {
     `Активных подписок: *${data.activeSubscriptions}*`,
     `Оплаченных заказов: *${data.paidOrders}*`,
     `Ожидают оплаты: *${data.pendingOrders}*`,
+    `Админов в панели: *${data.admins}*`,
+    `Обращений в поддержку: *${data.supportTickets}*`,
+  ].join("\n");
+
+export const adminPanelText = (): string =>
+  [
+    "🛠 *Админка*",
+    "",
+    "• 👥 Админы — посмотреть список, добавить и снять права",
+    "• 📊 Статистика — пользователи, подписки, заказы",
+    "",
+    "Обращения из поддержки приходят сюда отдельными сообщениями.",
+    "Чтобы ответить — сделайте *ответ* на сообщение с обращением.",
+  ].join("\n");
+
+export const adminListText = (
+  envIds: readonly number[],
+  dbIds: readonly number[],
+): string =>
+  [
+    "👥 *Админы*",
+    "",
+    ...(envIds.length
+      ? [
+          "Из `ADMIN_IDS` — снять через панель нельзя:",
+          ...envIds.map((id) => `• \`${id}\``),
+          "",
+        ]
+      : []),
+    ...(dbIds.length
+      ? ["Назначены через панель:", ...dbIds.map((id) => `• \`${id}\``)]
+      : ["Назначенных через панель пока нет."]),
+  ].join("\n");
+
+export const adminAddPromptText = (): string =>
+  [
+    "➕ *Новый админ*",
+    "",
+    "Отправьте числовой Telegram ID — пользователь сразу получит доступ к админ-панели.",
+    "",
+    "Отмена — любая кнопка меню.",
+  ].join("\n");
+
+export const adminAddedText = (telegramId: number): string =>
+  `✅ Пользователь \`${telegramId}\` теперь админ.`;
+
+export const supportPromptText = (): string =>
+  [
+    "💬 *Поддержка*",
+    "",
+    "Напишите сообщение — передам оператору, ответ придёт сюда же.",
+    "",
+    "Чтобы выйти из режима поддержки, нажмите любую кнопку меню.",
+  ].join("\n");
+
+export const supportSentText = (): string =>
+  "✅ Передал оператору. Ответ придёт сюда — можно продолжать писать.";
+
+export const supportTicketText = (user: {
+  id: number;
+  firstName: string | null;
+  username: string | null;
+}): string =>
+  [
+    "📨 *Обращение в поддержку*",
+    "",
+    `От: ${user.firstName ?? "без имени"}${
+      user.username ? ` (@${user.username})` : ""
+    }`,
+    `ID: \`${user.id}\``,
+    "",
+    "Чтобы ответить — сделайте *ответ* на это сообщение или на следующее.",
   ].join("\n");
 
 export { fmtDate, daysLeft };

@@ -11,20 +11,42 @@ export const MAIN_MENU_LABELS = [
   "💬 Поддержка",
 ] as const;
 
-export const isMainMenuLabel = (text: string): boolean =>
-  (MAIN_MENU_LABELS as readonly string[]).includes(text);
+/** Кнопка админки — только для админов. */
+export const ADMIN_MENU_LABEL = "🛠 Админка";
 
-export const mainKeyboard = (): Keyboard =>
-  new Keyboard()
+export const isMainMenuLabel = (text: string): boolean =>
+  (MAIN_MENU_LABELS as readonly string[]).includes(text) ||
+  text === ADMIN_MENU_LABEL;
+
+export const mainKeyboard = (isAdmin: boolean): Keyboard => {
+  const keyboard = new Keyboard()
     .text(MAIN_MENU_LABELS[0])
     .text(MAIN_MENU_LABELS[1])
     .row()
     .text(MAIN_MENU_LABELS[2])
     .text(MAIN_MENU_LABELS[3])
     .row()
-    .text(MAIN_MENU_LABELS[4])
-    .resized()
-    .persistent();
+    .text(MAIN_MENU_LABELS[4]);
+  if (isAdmin) keyboard.row().text(ADMIN_MENU_LABEL);
+  return keyboard.resized().persistent();
+};
+
+export const adminKeyboard = (): InlineKeyboard =>
+  new InlineKeyboard()
+    .text("👥 Админы", "adm:list")
+    .row()
+    .text("➕ Добавить админа", "adm:add")
+    .row()
+    .text("📊 Статистика", "adm:stats");
+
+/** Список снятия прав: админов из ADMIN_IDS убрать нельзя, их тут нет. */
+export const adminsKeyboard = (removableIds: readonly number[]): InlineKeyboard => {
+  const keyboard = new InlineKeyboard();
+  for (const id of removableIds) {
+    keyboard.text(`➖ ${id}`, `adm:del:${id}`).row();
+  }
+  return keyboard.text("⬅️ Назад", "adm:panel");
+};
 
 export const plansKeyboard = (): InlineKeyboard =>
   PLANS.reduce((keyboard, plan) => {

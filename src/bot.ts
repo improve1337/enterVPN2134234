@@ -7,15 +7,24 @@ import {
   type Context,
 } from "grammy";
 import { existsSync } from "node:fs";
+import { allAdminIds, isAdmin, isEnvAdmin } from "./admins.js";
 import { createMessageTracker } from "./chat-cleanup.js";
-import { config, isAdmin } from "./config.js";
+import { config } from "./config.js";
 import {
+  addAdmin,
   audit,
+  clearUserState,
+  findSupportUserId,
   getOrder,
   getUser,
+  getUserState,
+  listAdminIds,
   listOrders,
+  removeAdmin,
+  saveSupportMessage,
   setAutoRenew,
   setBanned,
+  setUserState,
   stats,
   upsertUser,
 } from "./db.js";
@@ -26,27 +35,37 @@ import { confirmPayment, createPayment } from "./services/payments.js";
 import { activatePlan, startTrial } from "./services/subscriptions.js";
 import { buildClientOptions } from "./telegram.js";
 import {
+  ADMIN_MENU_LABEL,
+  adminKeyboard,
+  adminsKeyboard,
   isMainMenuLabel,
   mainKeyboard,
   payKeyboard,
   plansKeyboard,
 } from "./ui/keyboards.js";
 import {
+  adminAddPromptText,
+  adminAddedText,
+  adminListText,
+  adminPanelText,
   adminStatsText,
   helpText,
   paymentCreatedText,
   paymentSuccessText,
   planListText,
   subscriptionText,
+  supportPromptText,
+  supportSentText,
+  supportTicketText,
   trialDeniedText,
   trialGrantedText,
   welcomeText,
 } from "./ui/texts.js";
 
-/** Минимум полей ответа Telegram, нужных для учёта отправленных сообщений. */
+/** Поля ответа Telegram, по которым узнаётся отправленное сообщение. */
 interface SentMessage {
-  chat: { id: number };
-  message_id: number;
+  chat?: { id?: number };
+  message_id?: number;
 }
 
 export function createBot(): Bot {
@@ -68,10 +87,14 @@ export function createBot(): Bot {
   // Запоминаем всё, что бот отправляет, чтобы убрать это при следующем действии.
   bot.api.config.use(async (prev, method, payload, signal) => {
     const response = await prev(method, payload, signal);
-    const name: string = method;
-    if (response.ok && (name === "sendMessage" || name === "sendPhoto")) {
-      const sent = response.result as unknown as SentMessage;
-      tracker.remember(sent.chat.id, sent.message_id);
+    if (response.ok) {
+      // Не все методы возвращают сообщение: copyMessage отдаёт только его id,
+      // sendMediaGroup — массив, остальные — true. Проверяем форму ответа.
+      const sent = response.result as unknown as SentMessage | undefined;
+      const chatId = sent?.chat?.id;
+      if (typeof chatId === "number" && typeof sent?.message_id === "number") {
+        tracker.remember(chatId, sent.message_id);
+      }
     }
     return response;
   });
@@ -95,6 +118,9 @@ export function createBot(): Bot {
       if (chatId !== undefined && ctx.message !== undefined) {
         tracker.remember(chatId, ctx.message.message_id);
       }
+      // Кнопка меню всегда выходит из режима поддержки и ввода ID админа.
+      const userId = ctx.from?.id;
+      if (userId !== undefined) clearUserState(userId);
     }
     await next();
   });
@@ -115,6 +141,21 @@ export function createBot(): Bot {
     return from.id;
   };
 
+  /** Пропускает дальше только админов; остальным отвечает отказом. */
+  const requireAdmin = async (ctx: Context): Promise<boolean> => {
+    if (isAdmin(fromId(ctx))) return true;
+    if (ctx.callbackQuery) {
+      await ctx
+        .answerCallbackQuery({ text: "Нет доступа", show_alert: true })
+        .catch(() => undefined);
+    } else {
+      await ctx
+        .reply("Команда доступна только администраторам.")
+        .catch(() => undefined);
+    }
+    return false;
+  };
+
   const replyMarkdown = (
     ctx: Context,
     text: string,
@@ -128,12 +169,13 @@ export function createBot(): Bot {
   /** Приветствие с баннером; если файла нет — обычный текст. */
   const sendWelcome = async (ctx: Context, name: string | null): Promise<void> => {
     const caption = welcomeText(name);
+    const keyboard = mainKeyboard(ctx.from ? isAdmin(ctx.from.id) : false);
     if (existsSync(config.bannerPath)) {
       try {
         await ctx.replyWithPhoto(new InputFile(config.bannerPath), {
           caption,
           parse_mode: "Markdown",
-          reply_markup: mainKeyboard(),
+          reply_markup: keyboard,
         });
         return;
       } catch (error) {
@@ -145,8 +187,38 @@ export function createBot(): Bot {
     } else {
       logger.warn({ path: config.bannerPath }, "файл баннера не найден");
     }
-    await ctx.reply(caption, { reply_markup: mainKeyboard() });
+    await ctx.reply(caption, { reply_markup: keyboard });
   };
+
+  /**
+   * Ответ админа на обращение. Проверяется раньше кнопок меню: админ может
+   * ответить текстом, который случайно совпадает с подписью кнопки.
+   */
+  bot.filter(
+    (ctx) =>
+      Boolean(ctx.message?.reply_to_message) &&
+      isAdmin(ctx.from?.id ?? 0),
+    async (ctx) => {
+      const message = ctx.message;
+      const from = ctx.from;
+      if (!message || !from || !message.reply_to_message) return;
+      const target = findSupportUserId(from.id, message.reply_to_message.message_id);
+      if (target === undefined) return;
+      try {
+        await ctx.api.copyMessage(target, from.id, message.message_id);
+        audit(from.id, "support_reply", String(target));
+        await ctx.reply(`✅ Ответ отправлен пользователю ${target}.`);
+      } catch (error) {
+        logger.warn(
+          { err: errorInfo(error), target },
+          "не удалось отправить ответ в поддержку",
+        );
+        await ctx.reply(
+          "⚠️ Не удалось отправить ответ: возможно, пользователь заблокировал бота.",
+        );
+      }
+    },
+  );
 
   bot.command("start", async (ctx) => {
     track(ctx);
@@ -184,7 +256,9 @@ export function createBot(): Bot {
 
   bot.command("menu", async (ctx) => {
     track(ctx);
-    await ctx.reply("Главное меню:", { reply_markup: mainKeyboard() });
+    await ctx.reply("Главное меню:", {
+      reply_markup: mainKeyboard(isAdmin(fromId(ctx))),
+    });
   });
 
   bot.hears("🎁 Пробный доступ", async (ctx) => {
@@ -218,14 +292,65 @@ export function createBot(): Bot {
   bot.hears("❓ Помощь", (ctx) => replyMarkdown(ctx, helpText()));
 
   bot.hears("💬 Поддержка", async (ctx) => {
-    const links = config.adminIds
-      .map((id) => `[написать оператору](tg://user?id=${id})`)
-      .join(", ");
+    track(ctx);
+    setUserState(fromId(ctx), "support");
+    await replyMarkdown(ctx, supportPromptText());
+  });
+
+  bot.hears(ADMIN_MENU_LABEL, async (ctx) => {
+    track(ctx);
+    if (!(await requireAdmin(ctx))) return;
+    await replyMarkdown(ctx, adminPanelText(), adminKeyboard());
+  });
+
+  // --- Админ-панель ---
+  bot.callbackQuery("adm:panel", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(ctx, adminPanelText(), adminKeyboard());
+  });
+
+  bot.callbackQuery("adm:stats", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(ctx, adminStatsText(stats()), adminKeyboard());
+  });
+
+  bot.callbackQuery("adm:list", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await ctx.answerCallbackQuery();
     await replyMarkdown(
       ctx,
-      `💬 Опишите проблему одним сообщением — ответим здесь же.${
-        links ? `\n\n${links}` : ""
-      }`,
+      adminListText(config.adminIds, listAdminIds()),
+      adminsKeyboard(listAdminIds()),
+    );
+  });
+
+  bot.callbackQuery("adm:add", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    setUserState(fromId(ctx), "admin_add");
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(ctx, adminAddPromptText());
+  });
+
+  bot.callbackQuery(/^adm:del:(\d+)$/, async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const actor = fromId(ctx);
+    const target = Number(ctx.match[1]);
+    if (isEnvAdmin(target)) {
+      await ctx.answerCallbackQuery({
+        text: "Этот админ задан в ADMIN_IDS — снять нельзя",
+        show_alert: true,
+      });
+      return;
+    }
+    removeAdmin(target);
+    audit(actor, "admin_removed", String(target));
+    await ctx.answerCallbackQuery({ text: `Права сняты: ${target}` });
+    await replyMarkdown(
+      ctx,
+      adminListText(config.adminIds, listAdminIds()),
+      adminsKeyboard(listAdminIds()),
     );
   });
 
@@ -381,6 +506,51 @@ export function createBot(): Bot {
     }
   });
 
+  /**
+   * Сообщения, которые не являются командами или кнопками меню: обращения
+   * в поддержку и ввод ID нового админа.
+   */
+  bot.on("message", async (ctx) => {
+    const message = ctx.message;
+    const from = ctx.from;
+    if (!message || !from) return;
+
+    const state = getUserState(from.id);
+
+    if (state === "admin_add") {
+      clearUserState(from.id);
+      if (!isAdmin(from.id)) return;
+      const target = Number((message.text ?? "").trim());
+      if (!Number.isInteger(target) || target <= 0) {
+        await ctx.reply(
+          "Нужен числовой Telegram ID. Попробуйте снова через «🛠 Админка».",
+        );
+        return;
+      }
+      addAdmin(target, from.id);
+      audit(from.id, "admin_added", String(target));
+      await replyMarkdown(ctx, adminAddedText(target), adminKeyboard());
+      try {
+        const notice = await ctx.api.sendMessage(
+          target,
+          "🛠 Вам выдали доступ к админ-панели. Отправьте /start — в меню появится кнопка «🛠 Админка».",
+        );
+        // Уведомление не должно исчезнуть при первом же действии нового админа.
+        tracker.forget(target, notice.message_id);
+      } catch (error) {
+        logger.warn(
+          { err: errorInfo(error), target },
+          "не удалось уведомить нового админа",
+        );
+      }
+      return;
+    }
+
+    if (state === "support") {
+      await forwardToAdmins(ctx);
+    }
+  });
+
   bot.catch((error) => {
     logger.error(
       { updateId: error.ctx.update.update_id, err: errorInfo(error.error) },
@@ -392,6 +562,58 @@ export function createBot(): Bot {
       logger.error({ cause: errorInfo(error.error.error) }, "сеть Telegram");
     }
   });
+
+  /** Пересылает обращение пользователя всем админам и запоминает связь. */
+  async function forwardToAdmins(ctx: Context): Promise<void> {
+    const from = ctx.from;
+    const message = ctx.message;
+    const chat = ctx.chat;
+    if (!from || !message || !chat) return;
+
+    const admins = allAdminIds();
+    if (admins.length === 0) {
+      await ctx.reply("Оператор пока недоступен — напишите позже.");
+      return;
+    }
+
+    let delivered = 0;
+    for (const adminId of admins) {
+      try {
+        const header = await ctx.api.sendMessage(
+          adminId,
+          supportTicketText({
+            id: from.id,
+            firstName: from.first_name ?? null,
+            username: from.username ?? null,
+          }),
+          { parse_mode: "Markdown" },
+        );
+        // Обращение должно остаться в чате админа: исключаем его из чистки.
+        tracker.forget(adminId, header.message_id);
+        saveSupportMessage(adminId, header.message_id, from.id);
+
+        const copied = await ctx.api.copyMessage(
+          adminId,
+          chat.id,
+          message.message_id,
+        );
+        saveSupportMessage(adminId, copied.message_id, from.id);
+        delivered += 1;
+      } catch (error) {
+        logger.warn(
+          { err: errorInfo(error), adminId },
+          "не удалось передать обращение админу",
+        );
+      }
+    }
+
+    if (delivered === 0) {
+      await ctx.reply("Не удалось передать обращение. Попробуйте позже.");
+      return;
+    }
+    audit(from.id, "support_message");
+    await ctx.reply(supportSentText());
+  }
 
   async function startCheckout(ctx: Context, planCode: string): Promise<void> {
     const id = fromId(ctx);
