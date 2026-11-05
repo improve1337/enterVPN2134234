@@ -7,6 +7,7 @@ import {
   type Context,
 } from "grammy";
 import { existsSync } from "node:fs";
+import { createMessageTracker } from "./chat-cleanup.js";
 import { config, isAdmin } from "./config.js";
 import {
   audit,
@@ -24,7 +25,12 @@ import { fulfillPaidOrder } from "./services/fulfillment.js";
 import { confirmPayment, createPayment } from "./services/payments.js";
 import { activatePlan, startTrial } from "./services/subscriptions.js";
 import { buildClientOptions } from "./telegram.js";
-import { mainKeyboard, payKeyboard, plansKeyboard } from "./ui/keyboards.js";
+import {
+  isMainMenuLabel,
+  mainKeyboard,
+  payKeyboard,
+  plansKeyboard,
+} from "./ui/keyboards.js";
 import {
   adminStatsText,
   helpText,
@@ -37,8 +43,61 @@ import {
   welcomeText,
 } from "./ui/texts.js";
 
+/** Минимум полей ответа Telegram, нужных для учёта отправленных сообщений. */
+interface SentMessage {
+  chat: { id: number };
+  message_id: number;
+}
+
 export function createBot(): Bot {
   const bot = new Bot(config.botToken, { client: buildClientOptions() });
+
+  const tracker = createMessageTracker();
+
+  /** Удаляет сообщения, отправленные на прошлом шаге. */
+  const cleanupChat = async (ctx: Context): Promise<void> => {
+    const chatId = ctx.chat?.id;
+    if (chatId === undefined) return;
+    const ids = tracker.take(chatId);
+    if (ids.length === 0) return;
+    await Promise.allSettled(
+      ids.map((messageId) => ctx.api.deleteMessage(chatId, messageId)),
+    );
+  };
+
+  // Запоминаем всё, что бот отправляет, чтобы убрать это при следующем действии.
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    const response = await prev(method, payload, signal);
+    const name: string = method;
+    if (response.ok && (name === "sendMessage" || name === "sendPhoto")) {
+      const sent = response.result as unknown as SentMessage;
+      tracker.remember(sent.chat.id, sent.message_id);
+    }
+    return response;
+  });
+
+  /**
+   * Перед каждой командой, кнопкой меню или инлайн-кнопкой убираем сообщения
+   * прошлого шага и запоминаем сообщение пользователя, чтобы удалить его в
+   * следующий раз. `sub:autorenew` исключён — он редактирует сообщение на месте.
+   */
+  bot.use(async (ctx, next) => {
+    const callbackData = ctx.callbackQuery?.data;
+    const text = ctx.message?.text;
+    const isMenuAction =
+      callbackData !== undefined
+        ? callbackData !== "sub:autorenew"
+        : text !== undefined && (text.startsWith("/") || isMainMenuLabel(text));
+
+    if (isMenuAction) {
+      await cleanupChat(ctx);
+      const chatId = ctx.chat?.id;
+      if (chatId !== undefined && ctx.message !== undefined) {
+        tracker.remember(chatId, ctx.message.message_id);
+      }
+    }
+    await next();
+  });
 
   const track = (ctx: Context): void => {
     if (!ctx.from) return;

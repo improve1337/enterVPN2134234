@@ -2,15 +2,27 @@ import { InlineKeyboard, Keyboard } from "grammy";
 import { PLANS } from "../plans.js";
 import type { OrderRecord } from "../types.js";
 
+/** Подписи кнопок главного меню: используются и в клавиатуре, и в чистке чата. */
+export const MAIN_MENU_LABELS = [
+  "🎁 Пробный доступ",
+  "💎 Тарифы",
+  "📦 Моя подписка",
+  "❓ Помощь",
+  "💬 Поддержка",
+] as const;
+
+export const isMainMenuLabel = (text: string): boolean =>
+  (MAIN_MENU_LABELS as readonly string[]).includes(text);
+
 export const mainKeyboard = (): Keyboard =>
   new Keyboard()
-    .text("🎁 Пробный доступ")
-    .text("💎 Тарифы")
+    .text(MAIN_MENU_LABELS[0])
+    .text(MAIN_MENU_LABELS[1])
     .row()
-    .text("📦 Моя подписка")
-    .text("❓ Помощь")
+    .text(MAIN_MENU_LABELS[2])
+    .text(MAIN_MENU_LABELS[3])
     .row()
-    .text("💬 Поддержка")
+    .text(MAIN_MENU_LABELS[4])
     .resized()
     .persistent();
 
