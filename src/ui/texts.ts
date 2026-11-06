@@ -167,7 +167,6 @@ export const adminStatsText = (data: {
   pendingOrders: number;
   paidOrders: number;
   admins: number;
-  supportTickets: number;
 }): string =>
   [
     "🛠 *Статистика*",
@@ -177,7 +176,6 @@ export const adminStatsText = (data: {
     `Оплаченных заказов: *${data.paidOrders}*`,
     `Ожидают оплаты: *${data.pendingOrders}*`,
     `Админов в панели: *${data.admins}*`,
-    `Обращений в поддержку: *${data.supportTickets}*`,
   ].join("\n");
 
 export const adminPanelText = (): string =>
@@ -222,32 +220,14 @@ export const adminAddPromptText = (): string =>
 export const adminAddedText = (telegramId: number): string =>
   `✅ Пользователь \`${telegramId}\` теперь админ.`;
 
-export const supportPromptText = (): string =>
+export const supportLinkText = (): string =>
   [
     "💬 *Поддержка*",
     "",
-    "Напишите сообщение — передам оператору, ответ придёт сюда же.",
+    "Обращения принимает отдельный бот поддержки: там можно создать тикет,",
+    "описать проблему и получить ответ оператора.",
     "",
-    "Чтобы выйти из режима поддержки, нажмите любую кнопку меню.",
-  ].join("\n");
-
-export const supportSentText = (): string =>
-  "✅ Передал оператору. Ответ придёт сюда — можно продолжать писать.";
-
-export const supportTicketText = (user: {
-  id: number;
-  firstName: string | null;
-  username: string | null;
-}): string =>
-  [
-    "📨 *Обращение в поддержку*",
-    "",
-    `От: ${user.firstName ?? "без имени"}${
-      user.username ? ` (@${user.username})` : ""
-    }`,
-    `ID: \`${user.id}\``,
-    "",
-    "Чтобы ответить — сделайте *ответ* на это сообщение или на следующее.",
+    "Нажмите кнопку ниже.",
   ].join("\n");
 
 export { fmtDate, daysLeft };

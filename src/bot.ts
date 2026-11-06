@@ -7,21 +7,19 @@ import {
   type Context,
 } from "grammy";
 import { existsSync } from "node:fs";
-import { allAdminIds, isAdmin, isEnvAdmin } from "./admins.js";
+import { isAdmin, isEnvAdmin } from "./admins.js";
 import { createMessageTracker } from "./chat-cleanup.js";
 import { config } from "./config.js";
 import {
   addAdmin,
   audit,
   clearUserState,
-  findSupportUserId,
   getOrder,
   getUser,
   getUserState,
   listAdminIds,
   listOrders,
   removeAdmin,
-  saveSupportMessage,
   setAutoRenew,
   setBanned,
   setUserState,
@@ -42,6 +40,7 @@ import {
   mainKeyboard,
   payKeyboard,
   plansKeyboard,
+  supportKeyboard,
 } from "./ui/keyboards.js";
 import {
   adminAddPromptText,
@@ -54,9 +53,7 @@ import {
   paymentSuccessText,
   planListText,
   subscriptionText,
-  supportPromptText,
-  supportSentText,
-  supportTicketText,
+  supportLinkText,
   trialDeniedText,
   trialGrantedText,
   welcomeText,
@@ -211,36 +208,6 @@ export function createBot(): Bot {
     await sendMenu(ctx, () => ctx.reply(caption, { reply_markup: keyboard }));
   };
 
-  /**
-   * Ответ админа на обращение. Проверяется раньше кнопок меню: админ может
-   * ответить текстом, который случайно совпадает с подписью кнопки.
-   */
-  bot.filter(
-    (ctx) =>
-      Boolean(ctx.message?.reply_to_message) &&
-      isAdmin(ctx.from?.id ?? 0),
-    async (ctx) => {
-      const message = ctx.message;
-      const from = ctx.from;
-      if (!message || !from || !message.reply_to_message) return;
-      const target = findSupportUserId(from.id, message.reply_to_message.message_id);
-      if (target === undefined) return;
-      try {
-        await ctx.api.copyMessage(target, from.id, message.message_id);
-        audit(from.id, "support_reply", String(target));
-        await ctx.reply(`✅ Ответ отправлен пользователю ${target}.`);
-      } catch (error) {
-        logger.warn(
-          { err: errorInfo(error), target },
-          "не удалось отправить ответ в поддержку",
-        );
-        await ctx.reply(
-          "⚠️ Не удалось отправить ответ: возможно, пользователь заблокировал бота.",
-        );
-      }
-    },
-  );
-
   bot.command("start", async (ctx) => {
     track(ctx);
     const payload = ctx.match.trim();
@@ -315,8 +282,11 @@ export function createBot(): Bot {
 
   bot.hears("💬 Поддержка", async (ctx) => {
     track(ctx);
-    setUserState(fromId(ctx), "support");
-    await replyMarkdown(ctx, supportPromptText());
+    await replyMarkdown(
+      ctx,
+      supportLinkText(),
+      supportKeyboard(config.supportUrl),
+    );
   });
 
   bot.hears(ADMIN_MENU_LABEL, async (ctx) => {
@@ -569,10 +539,6 @@ export function createBot(): Bot {
       }
       return;
     }
-
-    if (state === "support") {
-      await forwardToAdmins(ctx);
-    }
   });
 
   bot.catch((error) => {
@@ -586,58 +552,6 @@ export function createBot(): Bot {
       logger.error({ cause: errorInfo(error.error.error) }, "сеть Telegram");
     }
   });
-
-  /** Пересылает обращение пользователя всем админам и запоминает связь. */
-  async function forwardToAdmins(ctx: Context): Promise<void> {
-    const from = ctx.from;
-    const message = ctx.message;
-    const chat = ctx.chat;
-    if (!from || !message || !chat) return;
-
-    const admins = allAdminIds();
-    if (admins.length === 0) {
-      await ctx.reply("Оператор пока недоступен — напишите позже.");
-      return;
-    }
-
-    let delivered = 0;
-    for (const adminId of admins) {
-      try {
-        const header = await ctx.api.sendMessage(
-          adminId,
-          supportTicketText({
-            id: from.id,
-            firstName: from.first_name ?? null,
-            username: from.username ?? null,
-          }),
-          { parse_mode: "Markdown" },
-        );
-        // Обращение должно остаться в чате админа: исключаем его из чистки.
-        tracker.forget(adminId, header.message_id);
-        saveSupportMessage(adminId, header.message_id, from.id);
-
-        const copied = await ctx.api.copyMessage(
-          adminId,
-          chat.id,
-          message.message_id,
-        );
-        saveSupportMessage(adminId, copied.message_id, from.id);
-        delivered += 1;
-      } catch (error) {
-        logger.warn(
-          { err: errorInfo(error), adminId },
-          "не удалось передать обращение админу",
-        );
-      }
-    }
-
-    if (delivered === 0) {
-      await ctx.reply("Не удалось передать обращение. Попробуйте позже.");
-      return;
-    }
-    audit(from.id, "support_message");
-    await ctx.reply(supportSentText());
-  }
 
   async function startCheckout(ctx: Context, planCode: string): Promise<void> {
     const id = fromId(ctx);

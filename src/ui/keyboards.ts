@@ -73,3 +73,7 @@ export const subscriptionKeyboard = (subscriptionUrl: string): InlineKeyboard =>
 
 export const backKeyboard = (): InlineKeyboard =>
   new InlineKeyboard().text("⬅️ Назад", "back:main");
+
+/** Кнопка-ссылка на отдельный бот поддержки. */
+export const supportKeyboard = (supportUrl: string): InlineKeyboard =>
+  new InlineKeyboard().url("💬 Открыть поддержку", supportUrl);

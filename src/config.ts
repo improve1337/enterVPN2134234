@@ -40,6 +40,7 @@ const schema = z.object({
   WEBHOOK_PATH: z.string().default("/telegram/webhook"),
   WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_PROXY: z.string().optional(),
+  SUPPORT_URL: z.string().default("https://t.me/EnterseviceSupport_bot"),
   MOCK_MODE: boolFromString(true),
   MOCK_LANDING_URL: z.string().default("https://example.com"),
   MARZBAN_URL: z.string().default("http://127.0.0.1:8000"),
@@ -80,6 +81,7 @@ export const config = {
   webhookPath: env.WEBHOOK_PATH,
   webhookSecret: env.WEBHOOK_SECRET,
   telegramProxy: env.TELEGRAM_PROXY,
+  supportUrl: env.SUPPORT_URL,
   marzban: {
     url: env.MARZBAN_URL,
     username: env.MARZBAN_USERNAME,
