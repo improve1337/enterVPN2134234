@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { allAdminIds } from "./admins.js";
 import { createBot } from "./bot.js";
 import { initDatabase, closeDatabase } from "./db.js";
 import { errorInfo, logger } from "./logger.js";
@@ -8,7 +9,11 @@ import {
   deleteWebhook,
   registerWebhook,
 } from "./server.js";
-import { describePreflightFailure, preflight } from "./telegram.js";
+import {
+  describePreflightFailure,
+  preflight,
+  registerCommands,
+} from "./telegram.js";
 
 async function main(): Promise<void> {
   initDatabase();
@@ -38,6 +43,7 @@ async function main(): Promise<void> {
     );
   } else {
     logger.info({ bot: `@${check.username}` }, "Telegram доступен");
+    await registerCommands(bot.api, allAdminIds());
   }
 
   if (config.mode === "webhook") {

@@ -1,7 +1,7 @@
 import type { Agent } from "node:http";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
-import type { Bot } from "grammy";
+import type { Api, Bot } from "grammy";
 import { config } from "./config.js";
 import { errorInfo, logger } from "./logger.js";
 
@@ -126,4 +126,65 @@ export function describePreflightFailure(result: PreflightResult): string {
     ].join("\n");
   }
   return `Не удалось связаться с Telegram: ${result.message}`;
+}
+
+// --- Список команд для кнопки меню Telegram (☰) ---
+
+const PUBLIC_COMMANDS = [
+  { command: "start", description: "Главное меню" },
+  { command: "help", description: "Как подключиться" },
+  { command: "menu", description: "Показать меню" },
+];
+
+const ADMIN_COMMANDS = [
+  ...PUBLIC_COMMANDS,
+  { command: "admin", description: "Статистика" },
+  { command: "user", description: "Информация о пользователе" },
+  { command: "grant", description: "Выдать подписку" },
+  { command: "ban", description: "Заблокировать пользователя" },
+  { command: "unban", description: "Разблокировать пользователя" },
+];
+
+/**
+ * Регистрирует список команд: по нему Telegram рисует кнопку меню (☰).
+ * Обычным пользователям — базовые команды, админам — ещё и админские.
+ */
+export async function registerCommands(
+  api: Api,
+  adminIds: readonly number[],
+): Promise<void> {
+  try {
+    await api.setMyCommands(PUBLIC_COMMANDS);
+    for (const adminId of adminIds) {
+      await api.setMyCommands(ADMIN_COMMANDS, {
+        scope: { type: "chat", chat_id: adminId },
+      });
+    }
+    logger.info({ admins: adminIds.length }, "список команд Telegram обновлён");
+  } catch (error) {
+    logger.warn({ err: errorInfo(error) }, "не удалось обновить список команд");
+  }
+}
+
+/** Переключает список команд конкретного чата между админским и обычным. */
+export async function syncChatCommands(
+  api: Api,
+  chatId: number,
+  admin: boolean,
+): Promise<void> {
+  try {
+    if (admin) {
+      await api.setMyCommands(ADMIN_COMMANDS, {
+        scope: { type: "chat", chat_id: chatId },
+      });
+      return;
+    }
+    // Возврат к списку команд по умолчанию.
+    await api.deleteMyCommands({ scope: { type: "chat", chat_id: chatId } });
+  } catch (error) {
+    logger.warn(
+      { err: errorInfo(error), chatId },
+      "не удалось обновить команды чата",
+    );
+  }
 }

@@ -33,7 +33,7 @@ import { getPlan } from "./plans.js";
 import { fulfillPaidOrder } from "./services/fulfillment.js";
 import { confirmPayment, createPayment } from "./services/payments.js";
 import { activatePlan, startTrial } from "./services/subscriptions.js";
-import { buildClientOptions } from "./telegram.js";
+import { buildClientOptions, syncChatCommands } from "./telegram.js";
 import {
   ADMIN_MENU_LABEL,
   adminKeyboard,
@@ -368,6 +368,7 @@ export function createBot(): Bot {
     }
     removeAdmin(target);
     audit(actor, "admin_removed", String(target));
+    await syncChatCommands(ctx.api, target, false);
     await ctx.answerCallbackQuery({ text: `Права сняты: ${target}` });
     await replyMarkdown(
       ctx,
@@ -551,6 +552,7 @@ export function createBot(): Bot {
       }
       addAdmin(target, from.id);
       audit(from.id, "admin_added", String(target));
+      await syncChatCommands(ctx.api, target, true);
       await replyMarkdown(ctx, adminAddedText(target), adminKeyboard());
       try {
         const notice = await ctx.api.sendMessage(
