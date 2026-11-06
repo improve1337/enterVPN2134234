@@ -166,17 +166,38 @@ export function createBot(): Bot {
       ...(keyboard ? { reply_markup: keyboard } : {}),
     });
 
+  /**
+   * Отправляет экран с главной клавиатурой. Такое сообщение нельзя удалять:
+   * вместе с ним Telegram убирает и reply-клавиатуру. Поэтому старый экран
+   * меню удаляем сами, а новый помечаем якорем и исключаем из общей чистки.
+   */
+  const sendMenu = async (
+    ctx: Context,
+    send: () => Promise<{ message_id: number }>,
+  ): Promise<void> => {
+    const chatId = ctx.chat?.id;
+    const previous = chatId === undefined ? undefined : tracker.anchor(chatId);
+    const sent = await send();
+    if (chatId === undefined) return;
+    tracker.setAnchor(chatId, sent.message_id);
+    if (previous !== undefined && previous !== sent.message_id) {
+      await ctx.api.deleteMessage(chatId, previous).catch(() => undefined);
+    }
+  };
+
   /** Приветствие с баннером; если файла нет — обычный текст. */
   const sendWelcome = async (ctx: Context, name: string | null): Promise<void> => {
     const caption = welcomeText(name);
     const keyboard = mainKeyboard(ctx.from ? isAdmin(ctx.from.id) : false);
     if (existsSync(config.bannerPath)) {
       try {
-        await ctx.replyWithPhoto(new InputFile(config.bannerPath), {
-          caption,
-          parse_mode: "Markdown",
-          reply_markup: keyboard,
-        });
+        await sendMenu(ctx, () =>
+          ctx.replyWithPhoto(new InputFile(config.bannerPath), {
+            caption,
+            parse_mode: "Markdown",
+            reply_markup: keyboard,
+          }),
+        );
         return;
       } catch (error) {
         logger.warn(
@@ -187,7 +208,7 @@ export function createBot(): Bot {
     } else {
       logger.warn({ path: config.bannerPath }, "файл баннера не найден");
     }
-    await ctx.reply(caption, { reply_markup: keyboard });
+    await sendMenu(ctx, () => ctx.reply(caption, { reply_markup: keyboard }));
   };
 
   /**
@@ -256,9 +277,10 @@ export function createBot(): Bot {
 
   bot.command("menu", async (ctx) => {
     track(ctx);
-    await ctx.reply("Главное меню:", {
-      reply_markup: mainKeyboard(isAdmin(fromId(ctx))),
-    });
+    const keyboard = mainKeyboard(isAdmin(fromId(ctx)));
+    await sendMenu(ctx, () =>
+      ctx.reply("Главное меню:", { reply_markup: keyboard }),
+    );
   });
 
   bot.hears("🎁 Пробный доступ", async (ctx) => {
