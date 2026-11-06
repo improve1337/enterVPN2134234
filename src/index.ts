@@ -24,12 +24,18 @@ async function main(): Promise<void> {
     {
       mode: config.mode,
       mock: config.mockMode,
-      admins: config.adminIds.length,
+      admins: allAdminIds(),
       db: config.databasePath,
       proxy: config.telegramProxy ? "включён" : "нет",
     },
     `${config.brandName}: запуск`,
   );
+
+  if (allAdminIds().length === 0) {
+    logger.warn(
+      "Нет ни одного админа: кнопка «🛠 Админка» никому не показывается. Задайте ADMIN_IDS в переменных окружения хостинга.",
+    );
+  }
 
   const check = await preflight(bot);
   if (!check.ok) {
