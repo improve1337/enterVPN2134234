@@ -3,12 +3,15 @@ import { PLANS } from "../plans.js";
 import type { OrderRecord } from "../types.js";
 
 /** Подписи кнопок главного меню: используются и в клавиатуре, и в чистке чата. */
+export const OFFER_MENU_LABEL = "📄 Оферта и правила";
+
 export const MAIN_MENU_LABELS = [
   "🎁 Пробный доступ",
   "💎 Тарифы",
   "📦 Моя подписка",
   "❓ Помощь",
   "💬 Поддержка",
+  OFFER_MENU_LABEL,
 ] as const;
 
 /** Кнопка админки — только для админов. */
@@ -26,7 +29,8 @@ export const mainKeyboard = (isAdmin: boolean): Keyboard => {
     .text(MAIN_MENU_LABELS[2])
     .text(MAIN_MENU_LABELS[3])
     .row()
-    .text(MAIN_MENU_LABELS[4]);
+    .text(MAIN_MENU_LABELS[4])
+    .text(MAIN_MENU_LABELS[5]);
   if (isAdmin) keyboard.row().text(ADMIN_MENU_LABEL);
   return keyboard.resized().persistent();
 };

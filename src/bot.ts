@@ -34,6 +34,7 @@ import { activatePlan, startTrial } from "./services/subscriptions.js";
 import { buildClientOptions, syncChatCommands } from "./telegram.js";
 import {
   ADMIN_MENU_LABEL,
+  OFFER_MENU_LABEL,
   adminKeyboard,
   adminsKeyboard,
   isMainMenuLabel,
@@ -49,6 +50,7 @@ import {
   adminPanelText,
   adminStatsText,
   helpText,
+  offerText,
   paymentCreatedText,
   paymentSuccessText,
   planListText,
@@ -164,6 +166,20 @@ export function createBot(): Bot {
     });
 
   /**
+   * Ответ с HTML-разметкой. Нужен для текстов с юзернеймами: `_` в Markdown
+   * ломает разметку, а в HTML безопасен.
+   */
+  const replyHtml = (
+    ctx: Context,
+    text: string,
+    keyboard?: InlineKeyboard,
+  ): Promise<unknown> =>
+    ctx.reply(text, {
+      parse_mode: "HTML",
+      ...(keyboard ? { reply_markup: keyboard } : {}),
+    });
+
+  /**
    * Отправляет экран с главной клавиатурой. Такое сообщение нельзя удалять:
    * вместе с ним Telegram убирает и reply-клавиатуру. Поэтому старый экран
    * меню удаляем сами, а новый помечаем якорем и исключаем из общей чистки.
@@ -242,6 +258,8 @@ export function createBot(): Bot {
 
   bot.command("help", (ctx) => replyMarkdown(ctx, helpText()));
 
+  bot.command("offer", (ctx) => replyHtml(ctx, offerText()));
+
   bot.command("menu", async (ctx) => {
     track(ctx);
     const keyboard = mainKeyboard(isAdmin(fromId(ctx)));
@@ -288,6 +306,8 @@ export function createBot(): Bot {
       supportKeyboard(config.supportUrl),
     );
   });
+
+  bot.hears(OFFER_MENU_LABEL, (ctx) => replyHtml(ctx, offerText()));
 
   bot.hears(ADMIN_MENU_LABEL, async (ctx) => {
     track(ctx);

@@ -133,6 +133,7 @@ export function describePreflightFailure(result: PreflightResult): string {
 const PUBLIC_COMMANDS = [
   { command: "start", description: "Главное меню" },
   { command: "help", description: "Как подключиться" },
+  { command: "offer", description: "Оферта и правила" },
   { command: "menu", description: "Показать меню" },
 ];
 
