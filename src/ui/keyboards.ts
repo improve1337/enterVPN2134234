@@ -77,14 +77,14 @@ export const keyCardKeyboard = (
     keyboard.text("📤 Выдать / перевыдать", `key:issue:${code}`).row();
   }
   if (status === "active" || status === "issued" || status === "new") {
-    keyboard.text("🚫 Отозвать", `key:revoke:${code}`).row();
+    keyboard.text("🗑 Удалить", `key:revoke:${code}`).row();
   }
   return keyboard.text("⬅️ К ключам", "key:panel");
 };
 
 export const keyRevokeConfirmKeyboard = (code: string): InlineKeyboard =>
   new InlineKeyboard()
-    .text("🚫 Да, отозвать", `key:revokeok:${code}`)
+    .text("🗑 Да, удалить", `key:revokeok:${code}`)
     .row()
     .text("⬅️ Отмена", `key:view:${code}`);
 

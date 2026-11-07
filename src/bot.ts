@@ -601,20 +601,15 @@ export function createBot(): Bot {
     const result = await revokeKey({ code, actor: fromId(ctx) });
     if (!result.ok) {
       await ctx.answerCallbackQuery({
-        text:
-          result.reason === "already_revoked" ? "Уже отозван" : "Ключ не найден",
+        text: "Ключ не найден",
         show_alert: true,
       });
       return;
     }
     audit(fromId(ctx), "key_revoked", code);
-    await ctx.answerCallbackQuery({ text: "Ключ отозван" });
+    await ctx.answerCallbackQuery({ text: "Ключ удалён" });
     await ctx.editMessageReplyMarkup().catch(() => undefined);
-    await replyMarkdown(
-      ctx,
-      keyRevokedText(result),
-      keyCardKeyboard(result.key.code, result.key.status),
-    );
+    await replyMarkdown(ctx, keyRevokedText(result), keysKeyboard());
     if (result.key.targetTelegramId) {
       await ctx.api
         .sendMessage(
@@ -845,12 +840,7 @@ export function createBot(): Bot {
         const code = rest[0] ?? "";
         const result = await revokeKey({ code, actor: fromId(ctx) });
         if (!result.ok) {
-          await replyMarkdown(
-            ctx,
-            result.reason === "already_revoked"
-              ? `🚫 Ключ \`${code}\` уже отозван.`
-              : keyNotFoundText(code),
-          );
+          await replyMarkdown(ctx, keyNotFoundText(code));
           return;
         }
         audit(fromId(ctx), "key_revoked", code);

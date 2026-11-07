@@ -128,7 +128,7 @@ describe("выдача ключа", () => {
     expect(result.key.status).toBe("active");
   });
 
-  it("отозванный ключ выдать нельзя", async () => {
+  it("удалённый ключ выдать нельзя", async () => {
     const [key] = createKeys({ planCode: "vpn_1m", createdBy: 1 });
     await revokeKey({ code: key!.code, actor: 1 });
     const result = await issueKey({
@@ -138,7 +138,7 @@ describe("выдача ключа", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.reason).toBe("revoked");
+    expect(result.reason).toBe("not_found");
   });
 
   it("неизвестный код не выдаётся", async () => {
@@ -176,15 +176,18 @@ describe("привязка по @username", () => {
 });
 
 describe("отзыв ключа", () => {
-  it("выключает доступ и обнуляет срок подписки", async () => {
+  it("удаляет ключ, выключает доступ и обнуляет срок подписки", async () => {
     const [key] = createKeys({ planCode: "vpn_1m", createdBy: 1 });
     await issueKey({ code: key!.code, target: { telegramId: USER }, actor: 1 });
 
     const result = await revokeKey({ code: key!.code, actor: 1 });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.key.status).toBe("revoked");
+    // Возвращается снимок ключа, а из базы запись уже удалена.
+    expect(result.key.status).toBe("active");
     expect(result.disabledAccess).toBe(true);
+    expect(getKey(key!.code)).toBeUndefined();
+    expect(listKeysByTarget(USER)).toHaveLength(0);
 
     const expires = getUser(USER)?.subscriptionExpiresAt;
     expect(expires).toBeDefined();
@@ -210,7 +213,7 @@ describe("отзыв ключа", () => {
     const again = await revokeKey({ code: key!.code, actor: 1 });
     expect(again.ok).toBe(false);
     if (again.ok) return;
-    expect(again.reason).toBe("already_revoked");
+    expect(again.reason).toBe("not_found");
   });
 });
 

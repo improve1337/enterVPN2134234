@@ -262,7 +262,6 @@ export const keysPanelText = (summary: {
     `• 🆕 новых: ${summary.fresh}`,
     `• 📤 ждут получателя: ${summary.issued}`,
     `• ✅ активных: ${summary.active}`,
-    `• 🚫 отозванных: ${summary.revoked}`,
     `• ⌛ истёкших: ${summary.expired}`,
     "",
     "Ключ — единица выдачи. Создайте код, затем выдайте его по Telegram ID или `@username`.",
@@ -412,7 +411,7 @@ export const keyIssuedToUserText = (key: KeyRecord): string =>
 
 export const keyRevokedToUserText = (key: KeyRecord): string =>
   [
-    "🚫 Доступ по вашему ключу отозван.",
+    "🚫 Доступ по вашему ключу отключён.",
     "",
     `Ключ: \`${key.code}\``,
     "",
@@ -421,10 +420,10 @@ export const keyRevokedToUserText = (key: KeyRecord): string =>
 
 export const keyRevokeConfirmText = (key: KeyRecord): string =>
   [
-    `🚫 *Отозвать ключ* \`${key.code}\`?`,
+    `🗑 *Удалить ключ* \`${key.code}\`?`,
     "",
-    "Доступ в Marzban будет выключен, если у пользователя не осталось других активных ключей.",
-    "Действие можно отменить только повторной выдачей.",
+    "Запись исчезнет из списка, а доступ в Marzban выключится, если у пользователя не осталось других активных ключей.",
+    "Вернуть можно только новой выдачей.",
   ].join("\n");
 
 export const keyRevokedText = (result: {
@@ -432,7 +431,7 @@ export const keyRevokedText = (result: {
   disabledAccess: boolean;
 }): string =>
   [
-    "🚫 *Ключ отозван*",
+    "🗑 *Ключ удалён*",
     "",
     `Код: \`${result.key.code}\``,
     result.disabledAccess

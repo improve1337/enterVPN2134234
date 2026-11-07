@@ -3,6 +3,7 @@ import { config } from "../config.js";
 import {
   countKeys,
   createKeyRecord,
+  deleteKeyRecord,
   findUserByUsername,
   getKey as getKeyRow,
   getUser,
@@ -238,11 +239,12 @@ export async function resolvePendingKeys(input: {
 
 export type RevokeResult =
   | { ok: true; key: KeyRecord; disabledAccess: boolean }
-  | { ok: false; reason: "not_found" | "already_revoked" };
+  | { ok: false; reason: "not_found" };
 
 /**
- * Отзывает ключ. Доступ в Marzban выключается только если у пользователя не
- * осталось других действующих ключей (подписка Marzban общая на Telegram ID).
+ * Удаляет ключ: запись из базы пропадает, в списке остаётся только выданное.
+ * Доступ в Marzban выключается, только если у пользователя не осталось других
+ * действующих ключей (подписка Marzban общая на Telegram ID).
  */
 export async function revokeKey(input: {
   code: string;
@@ -250,14 +252,8 @@ export async function revokeKey(input: {
 }): Promise<RevokeResult> {
   const key = getKey(input.code);
   if (!key) return { ok: false, reason: "not_found" };
-  if (key.status === "revoked") return { ok: false, reason: "already_revoked" };
 
   const now = new Date().toISOString();
-  updateKeyRecord(key.code, {
-    status: "revoked",
-    revokedAt: now,
-    revokedBy: input.actor,
-  });
 
   let disabledAccess = false;
   if (key.marzbanUsername) {
@@ -274,7 +270,9 @@ export async function revokeKey(input: {
       }
     }
   }
-  return { ok: true, key: getKey(key.code) as KeyRecord, disabledAccess };
+
+  deleteKeyRecord(key.code);
+  return { ok: true, key, disabledAccess };
 }
 
 // --- Ключ из оплаты/пробного ---

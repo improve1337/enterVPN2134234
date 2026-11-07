@@ -105,6 +105,9 @@ export function initDatabase(): void {
   raw.exec("PRAGMA journal_mode = WAL;");
   raw.exec("PRAGMA foreign_keys = ON;");
   raw.exec(SCHEMA);
+  // Отозванные ключи не храним: отзыв удаляет запись. Здесь подчищаем те,
+  // что остались от прежней версии (когда ключ помечался статусом `revoked`).
+  raw.exec("DELETE FROM keys WHERE status = 'revoked'");
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -610,6 +613,12 @@ export function getKey(code: string): KeyRecord | undefined {
     .prepare("SELECT * FROM keys WHERE code = ?")
     .get(code.trim().toUpperCase()) as KeyRow | undefined;
   return row ? toKey(row) : undefined;
+}
+
+export function deleteKeyRecord(code: string): void {
+  raw
+    .prepare("DELETE FROM keys WHERE code = ?")
+    .run(code.trim().toUpperCase());
 }
 
 export function listKeys(limit = 5, offset = 0): KeyRecord[] {
