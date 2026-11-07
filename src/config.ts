@@ -43,6 +43,8 @@ const schema = z.object({
   SUPPORT_URL: z.string().default("https://t.me/EnterseviceSupport_bot"),
   MOCK_MODE: boolFromString(true),
   MOCK_LANDING_URL: z.string().default("https://example.com"),
+  KEY_CODE_PREFIX: z.string().default("ENT"),
+  KEYS_PAGE_SIZE: z.coerce.number().int().min(1).max(20).default(5),
   MARZBAN_URL: z.string().default("http://127.0.0.1:8000"),
   MARZBAN_USERNAME: z.string().optional(),
   MARZBAN_PASSWORD: z.string().optional(),
@@ -92,5 +94,7 @@ export const config = {
     secret: env.PLATEGA_SECRET,
   },
   mockLandingUrl: env.MOCK_LANDING_URL,
+  keyCodePrefix: env.KEY_CODE_PREFIX.trim().toUpperCase() || "ENT",
+  keysPageSize: env.KEYS_PAGE_SIZE,
   botUsername: env.BOT_USERNAME,
 } as const;

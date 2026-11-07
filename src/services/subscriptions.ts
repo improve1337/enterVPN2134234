@@ -7,6 +7,7 @@ import {
 } from "../db.js";
 import { TRIAL, getPlan } from "../plans.js";
 import type { Subscription } from "../types.js";
+import { recordSubscriptionKey } from "./keys.js";
 import { provisionSubscription } from "./provision.js";
 
 export interface TrialOutcome {
@@ -22,7 +23,7 @@ export async function startTrial(telegramId: number): Promise<TrialOutcome> {
   if (user.trialUsed) return { granted: false, reason: "already_used" };
 
   const result = await provisionSubscription({
-    telegramId,
+    marzbanUsername: `tg_${telegramId}`,
     planCode: "trial",
     days: TRIAL.days,
     trafficLimitGb: TRIAL.trafficGb,
@@ -36,15 +37,29 @@ export async function startTrial(telegramId: number): Promise<TrialOutcome> {
     marzbanUsername: result.username,
     subscriptionUrl: result.subscriptionUrl,
   });
+  const subscription: Subscription = {
+    ...result,
+    planCode: "trial",
+    planName: "Пробный доступ",
+  };
+  recordSubscriptionKey({
+    telegramId,
+    planCode: "trial",
+    planName: subscription.planName,
+    days: TRIAL.days,
+    trafficLimitGb: TRIAL.trafficGb,
+    subscription,
+  });
   return {
     granted: true,
-    subscription: { ...result, planCode: "trial", planName: "Пробный доступ" },
+    subscription,
   };
 }
 
 export async function activatePlan(
   telegramId: number,
   planCode: string,
+  options: { orderId?: string | null } = {},
 ): Promise<Subscription> {
   const plan = getPlan(planCode);
   if (!plan) throw new Error(`Неизвестный тариф: ${planCode}`);
@@ -52,7 +67,7 @@ export async function activatePlan(
   const user = getUser(telegramId);
   const currentExpiry = user?.subscriptionExpiresAt ?? null;
   const result = await provisionSubscription({
-    telegramId,
+    marzbanUsername: `tg_${telegramId}`,
     planCode,
     days: plan.days,
     trafficLimitGb: plan.trafficGb,
@@ -66,7 +81,21 @@ export async function activatePlan(
     marzbanUsername: result.username,
     subscriptionUrl: result.subscriptionUrl,
   });
-  return { ...result, planCode, planName: plan.name };
+  const subscription: Subscription = {
+    ...result,
+    planCode,
+    planName: plan.name,
+  };
+  recordSubscriptionKey({
+    telegramId,
+    planCode,
+    planName: plan.name,
+    days: plan.days,
+    trafficLimitGb: plan.trafficGb,
+    subscription,
+    orderId: options.orderId ?? null,
+  });
+  return subscription;
 }
 
 /** Создать пользователя, если его ещё нет — вызывается на /start. */

@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { PLANS, TRIAL, getPlan, trafficLabel } from "../plans.js";
-import type { OrderRecord, UserRecord } from "../types.js";
+import type { KeyRecord, KeyStatus, OrderRecord, UserRecord } from "../types.js";
 
 const brand = config.brandName;
 
@@ -228,6 +228,236 @@ export const supportLinkText = (): string =>
     "описать проблему и получить ответ оператора.",
     "",
     "Нажмите кнопку ниже.",
+  ].join("\n");
+
+// --- Ключи доступа ---
+
+export const keyStatusLabel = (status: KeyStatus): string => {
+  switch (status) {
+    case "new":
+      return "🆕 новый";
+    case "issued":
+      return "📤 ждёт получателя";
+    case "active":
+      return "✅ активен";
+    case "revoked":
+      return "🚫 отозван";
+    case "expired":
+      return "⌛ истёк";
+  }
+};
+
+export const keysPanelText = (summary: {
+  total: number;
+  fresh: number;
+  issued: number;
+  active: number;
+  revoked: number;
+  expired: number;
+}): string =>
+  [
+    "🔑 *Ключи доступа*",
+    "",
+    `Всего: *${summary.total}*`,
+    `• 🆕 новых: ${summary.fresh}`,
+    `• 📤 ждут получателя: ${summary.issued}`,
+    `• ✅ активных: ${summary.active}`,
+    `• 🚫 отозванных: ${summary.revoked}`,
+    `• ⌛ истёкших: ${summary.expired}`,
+    "",
+    "Ключ — единица выдачи. Создайте код, затем выдайте его по Telegram ID или `@username`.",
+  ].join("\n");
+
+export const keyPlansPromptText = (): string =>
+  ["➕ *Новый ключ*", "", "Выберите тариф — срок и лимит берутся из него."].join(
+    "\n",
+  );
+
+export const keyCreatedText = (keys: readonly KeyRecord[]): string => {
+  const lines = keys.map(
+    (key) =>
+      `\`${key.code}\` — ${key.planName}, ${key.days} дн., ${trafficLabel(key.trafficLimitGb)}`,
+  );
+  return [
+    keys.length === 1 ? "✅ *Ключ создан*" : `✅ *Создано ключей: ${keys.length}*`,
+    "",
+    ...lines,
+    "",
+    "Теперь выдайте ключ получателю кнопкой ниже или командой `/key issue <код> <id|@username>`.",
+  ].join("\n");
+};
+
+export const keyListText = (data: {
+  items: readonly KeyRecord[];
+  total: number;
+  page: number;
+  pages: number;
+}): string => {
+  if (data.total === 0) {
+    return ["📋 *Ключи*", "", "Ключей пока нет. Нажмите «➕ Создать ключ»."].join(
+      "\n",
+    );
+  }
+  const lines = data.items.map((key) => {
+    const target = key.targetTelegramId
+      ? `ID \`${key.targetTelegramId}\``
+      : key.targetUsername
+        ? `\`@${key.targetUsername}\``
+        : "—";
+    return `• \`${key.code}\` — ${keyStatusLabel(key.status)}\n   ${key.planName} · получатель: ${target}`;
+  });
+  return [
+    `📋 *Ключи* (стр. ${data.page + 1}/${data.pages}, всего ${data.total})`,
+    "",
+    ...lines,
+  ].join("\n");
+};
+
+export const keyCardText = (key: KeyRecord): string => {
+  const target = key.targetTelegramId
+    ? `ID \`${key.targetTelegramId}\``
+    : key.targetUsername
+      ? `\`@${key.targetUsername}\``
+      : "не выдан";
+  const expiry = key.expiresAt
+    ? `${fmtDate(key.expiresAt)} (осталось ${daysLeft(key.expiresAt)} дн.)`
+    : "—";
+  return [
+    `🔑 *Ключ* \`${key.code}\``,
+    "",
+    `Тариф: *${key.planName}* (${key.days} дн., ${trafficLabel(key.trafficLimitGb)})`,
+    `Статус: ${keyStatusLabel(key.status)}`,
+    `Получатель: ${target}`,
+    `Выдан: ${fmtDate(key.issuedAt)}`,
+    `Активирован: ${fmtDate(key.activatedAt)}`,
+    `Действует до: ${expiry}`,
+    ...(key.marzbanUsername ? [`Marzban: \`${key.marzbanUsername}\``] : []),
+    ...(key.orderId ? [`Заказ: \`${key.orderId}\``] : []),
+    ...(key.note ? [`Заметка: ${key.note}`] : []),
+    "",
+    ...(key.subscriptionUrl
+      ? ["🔗 *Ссылка-подписка:*", `\`${key.subscriptionUrl}\``]
+      : ["Ссылки пока нет — ключ не активирован."]),
+  ].join("\n");
+};
+
+export const keyLookupPromptText = (): string =>
+  [
+    "🔎 *Поиск ключа*",
+    "",
+    "Отправьте код ключа (например `ENT-AB12-CD34`).",
+    "",
+    "Отмена — любая кнопка меню.",
+  ].join("\n");
+
+export const keyIssueCodePromptText = (): string =>
+  [
+    "📤 *Выдача ключа*",
+    "",
+    "Отправьте код ключа, который нужно выдать.",
+    "",
+    "Отмена — любая кнопка меню.",
+  ].join("\n");
+
+export const keyIssueTargetPromptText = (code: string): string =>
+  [
+    `📤 *Выдача ключа* \`${code}\``,
+    "",
+    "Кому выдать? Отправьте Telegram ID (числом) или `@username`.",
+    "",
+    "Если получатель ещё не запускал бота, ключ будет ждать его первого сообщения.",
+  ].join("\n");
+
+export const keyIssuedText = (result: {
+  key: KeyRecord;
+  pending: boolean;
+  telegramId?: number;
+}): string => {
+  if (result.pending) {
+    return [
+      "📤 *Ключ выдан*",
+      "",
+      `Код: \`${result.key.code}\``,
+      `Получатель: \`@${result.key.targetUsername}\``,
+      "",
+      "Пользователь ещё не запускал бота — ключ активируется автоматически при первом сообщении.",
+    ].join("\n");
+  }
+  return [
+    "✅ *Ключ выдан и активирован*",
+    "",
+    `Код: \`${result.key.code}\``,
+    `Получатель: ID \`${result.telegramId ?? result.key.targetTelegramId}\``,
+    `Действует до: *${fmtDate(result.key.expiresAt)}*`,
+    "",
+    ...(result.key.subscriptionUrl
+      ? ["🔗 Ссылка-подписка:", `\`${result.key.subscriptionUrl}\``]
+      : []),
+  ].join("\n");
+};
+
+export const keyIssuedToUserText = (key: KeyRecord): string =>
+  [
+    "🎉 *Вам выдан доступ!*",
+    "",
+    `Тариф: *${key.planName}*`,
+    `Ключ: \`${key.code}\``,
+    `Активен до: *${fmtDate(key.expiresAt)}*`,
+    "",
+    "🔗 Ссылка-подписка:",
+    `\`${key.subscriptionUrl ?? "—"}\``,
+    "",
+    "Импортируйте её в клиент и подключайтесь.",
+  ].join("\n");
+
+export const keyRevokedToUserText = (key: KeyRecord): string =>
+  [
+    "🚫 Доступ по вашему ключу отозван.",
+    "",
+    `Ключ: \`${key.code}\``,
+    "",
+    "Если это ошибка — напишите в поддержку.",
+  ].join("\n");
+
+export const keyRevokeConfirmText = (key: KeyRecord): string =>
+  [
+    `🚫 *Отозвать ключ* \`${key.code}\`?`,
+    "",
+    "Доступ в Marzban будет выключен, если у пользователя не осталось других активных ключей.",
+    "Действие можно отменить только повторной выдачей.",
+  ].join("\n");
+
+export const keyRevokedText = (result: {
+  key: KeyRecord;
+  disabledAccess: boolean;
+}): string =>
+  [
+    "🚫 *Ключ отозван*",
+    "",
+    `Код: \`${result.key.code}\``,
+    result.disabledAccess
+      ? "Доступ в Marzban выключен."
+      : "У пользователя остались другие активные ключи — доступ сохранён.",
+  ].join("\n");
+
+export const keyNotFoundText = (code: string): string =>
+  code
+    ? `🔎 Ключ \`${code}\` не найден.`
+    : "🔎 Укажите код ключа.";
+
+export const keyHelpText = (): string =>
+  [
+    "🔑 *Ключи — команды*",
+    "",
+    "• `/key` — эта справка",
+    "• `/key new <тариф> [заметка]` — создать ключ (`vpn_1m`, `vpn_3m`)",
+    "• `/key list` — список ключей",
+    "• `/key info <код>` — карточка ключа",
+    "• `/key issue <код> <telegram_id|@username>` — выдать ключ",
+    "• `/key revoke <код>` — отозвать ключ",
+    "• `/key link <код>` — прислать ссылку-подписку",
+    "",
+    "Всё то же доступно кнопками в «🛠 Админка» → «🔑 Ключи».",
   ].join("\n");
 
 /**

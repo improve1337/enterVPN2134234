@@ -66,3 +66,41 @@ export interface Subscription extends ProvisionResult {
   planCode: string;
   planName: string;
 }
+
+/**
+ * Статус ключа доступа:
+ * - `new`     — создан админом, никому не выдан;
+ * - `issued`  — выдан по `@username`, но получатель ещё не запускал бота;
+ * - `active`  — привязан к Telegram ID, подписка выдана;
+ * - `revoked` — отозван админом (доступ в Marzban выключен);
+ * - `expired` — срок истёк.
+ */
+export type KeyStatus = "new" | "issued" | "active" | "revoked" | "expired";
+
+export interface KeyRecord {
+  /** Человекочитаемый код вида `ENT-XXXX-XXXX`. */
+  code: string;
+  planCode: string;
+  /** Название тарифа на момент выдачи (снапшот). */
+  planName: string;
+  /** Срок в днях на момент выдачи (снапшот). */
+  days: number;
+  /** Лимит трафика в ГБ; `null` — безлимит (снапшот). */
+  trafficLimitGb: number | null;
+  status: KeyStatus;
+  note: string | null;
+  createdBy: number | null;
+  createdAt: string;
+  targetTelegramId: number | null;
+  /** `@username` без собаки, в нижнем регистре. */
+  targetUsername: string | null;
+  marzbanUsername: string | null;
+  subscriptionUrl: string | null;
+  issuedAt: string | null;
+  activatedAt: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  revokedBy: number | null;
+  /** Заказ, если ключ появился из оплаты. */
+  orderId: string | null;
+}

@@ -142,6 +142,7 @@ const ADMIN_COMMANDS = [
   { command: "admin", description: "Статистика" },
   { command: "user", description: "Информация о пользователе" },
   { command: "grant", description: "Выдать подписку" },
+  { command: "key", description: "Ключи: создать и выдать" },
   { command: "ban", description: "Заблокировать пользователя" },
   { command: "unban", description: "Разблокировать пользователя" },
 ];

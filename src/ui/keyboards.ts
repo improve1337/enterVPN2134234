@@ -1,6 +1,6 @@
 import { InlineKeyboard, Keyboard } from "grammy";
 import { PLANS } from "../plans.js";
-import type { OrderRecord } from "../types.js";
+import type { KeyRecord, KeyStatus, OrderRecord } from "../types.js";
 
 /** Подписи кнопок главного меню: используются и в клавиатуре, и в чистке чата. */
 export const OFFER_MENU_LABEL = "📄 Оферта и правила";
@@ -41,7 +41,73 @@ export const adminKeyboard = (): InlineKeyboard =>
     .row()
     .text("➕ Добавить админа", "adm:add")
     .row()
-    .text("📊 Статистика", "adm:stats");
+    .text("📊 Статистика", "adm:stats")
+    .row()
+    .text("🔑 Ключи", "key:panel");
+
+/** Панель управления ключами. */
+export const keysKeyboard = (): InlineKeyboard =>
+  new InlineKeyboard()
+    .text("➕ Создать ключ", "key:new")
+    .row()
+    .text("📤 Выдать ключ", "key:issue")
+    .row()
+    .text("📋 Список ключей", "key:list:0")
+    .row()
+    .text("🔎 Найти ключ", "key:find")
+    .row()
+    .text("⬅️ Назад", "adm:panel");
+
+/** Выбор тарифа при создании ключа. */
+export const keyPlansKeyboard = (): InlineKeyboard => {
+  const keyboard = new InlineKeyboard();
+  for (const plan of PLANS) {
+    keyboard.text(`${plan.name} — ${plan.priceRub} ₽`, `key:create:${plan.code}`).row();
+  }
+  return keyboard.text("⬅️ Назад", "key:panel");
+};
+
+/** Действия над конкретным ключом. */
+export const keyCardKeyboard = (
+  code: string,
+  status: KeyStatus,
+): InlineKeyboard => {
+  const keyboard = new InlineKeyboard();
+  if (status !== "revoked") {
+    keyboard.text("📤 Выдать / перевыдать", `key:issue:${code}`).row();
+  }
+  if (status === "active" || status === "issued" || status === "new") {
+    keyboard.text("🚫 Отозвать", `key:revoke:${code}`).row();
+  }
+  return keyboard.text("⬅️ К ключам", "key:panel");
+};
+
+export const keyRevokeConfirmKeyboard = (code: string): InlineKeyboard =>
+  new InlineKeyboard()
+    .text("🚫 Да, отозвать", `key:revokeok:${code}`)
+    .row()
+    .text("⬅️ Отмена", `key:view:${code}`);
+
+/** Список ключей с навигацией по страницам. */
+export const keyListKeyboard = (
+  items: readonly KeyRecord[],
+  page: number,
+  pages: number,
+  statusLabel: (status: KeyStatus) => string,
+): InlineKeyboard => {
+  const keyboard = new InlineKeyboard();
+  for (const key of items) {
+    keyboard
+      .text(`${key.code} · ${statusLabel(key.status)}`, `key:view:${key.code}`)
+      .row();
+  }
+  if (pages > 1) {
+    if (page > 0) keyboard.text("⬅️", `key:list:${page - 1}`);
+    if (page < pages - 1) keyboard.text("➡️", `key:list:${page + 1}`);
+    keyboard.row();
+  }
+  return keyboard.text("⬅️ К ключам", "key:panel");
+};
 
 /** Список снятия прав: админов из ADMIN_IDS убрать нельзя, их тут нет. */
 export const adminsKeyboard = (removableIds: readonly number[]): InlineKeyboard => {

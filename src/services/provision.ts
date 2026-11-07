@@ -4,7 +4,8 @@ import type { ProvisionResult } from "../types.js";
 import { addDays } from "../db.js";
 
 export interface ProvisionRequest {
-  telegramId: number;
+  /** Имя пользователя в Marzban: `tg_<telegramId>` для подписок из бота. */
+  marzbanUsername: string;
   planCode: string;
   days: number;
   /** `null` — безлимитный трафик. */
@@ -27,12 +28,38 @@ export async function provisionSubscription(
 }
 
 export async function revokeSubscription(telegramId: number): Promise<void> {
+  await deleteSubscription(`tg_${telegramId}`);
+}
+
+/** Полное удаление пользователя в Marzban (например, при отзыве доступа). */
+export async function deleteSubscription(
+  marzbanUsername: string,
+): Promise<void> {
   if (config.mockMode) return;
-  await marzbanRequest("DELETE", `/api/user/tg_${telegramId}`);
+  await marzbanRequest(
+    "DELETE",
+    `/api/user/${encodeURIComponent(marzbanUsername)}`,
+  );
+}
+
+/**
+ * Включает или выключает доступ пользователя в Marzban, не удаляя его:
+ * при отзыве ключа подписка ставится в `disabled`, при повторной выдаче — в `active`.
+ */
+export async function setSubscriptionStatus(
+  marzbanUsername: string,
+  status: "active" | "disabled",
+): Promise<void> {
+  if (config.mockMode) return;
+  await marzbanRequest(
+    "PUT",
+    `/api/user/${encodeURIComponent(marzbanUsername)}`,
+    { status },
+  );
 }
 
 function mockProvision(request: ProvisionRequest): ProvisionResult {
-  const username = `tg_${request.telegramId}`;
+  const username = request.marzbanUsername;
   const token = randomBytes(9).toString("hex");
   const base = config.mockLandingUrl.replace(/\/+$/, "");
   const start = request.extendFrom ? new Date(request.extendFrom) : new Date();
@@ -119,14 +146,15 @@ async function marzbanRequest(
 async function marzbanProvision(
   request: ProvisionRequest,
 ): Promise<ProvisionResult> {
-  const username = `tg_${request.telegramId}`;
+  const username = request.marzbanUsername;
   const expire = Math.floor(
     new Date(addDays(new Date(), request.days)).getTime() / 1000,
   );
   const payload = {
     username,
     proxies: { vless: {} },
-    inbounds: { vless: ["VLESS TCP REALITY"] },
+    // VLESS Reality — рабочий профиль; VLESS XHTTP CDN — обход белых списков (RU LTE).
+    inbounds: { vless: ["VLESS Reality", "VLESS XHTTP CDN"] },
     expire,
     // В Marzban data_limit = 0 означает «без лимита».
     data_limit:

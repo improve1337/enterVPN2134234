@@ -3,6 +3,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { config } from "./config.js";
 import type {
+  KeyRecord,
+  KeyStatus,
   OrderRecord,
   OrderStatus,
   UserRecord,
@@ -59,6 +61,33 @@ CREATE TABLE IF NOT EXISTS user_states (
   state       TEXT NOT NULL,
   created_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS keys (
+  code               TEXT PRIMARY KEY,
+  plan_code          TEXT NOT NULL,
+  plan_name          TEXT NOT NULL,
+  days               INTEGER NOT NULL,
+  traffic_limit_gb   INTEGER,
+  status             TEXT NOT NULL,
+  note               TEXT,
+  created_by         INTEGER,
+  created_at         TEXT NOT NULL,
+  target_telegram_id INTEGER,
+  target_username    TEXT,
+  marzban_username   TEXT,
+  subscription_url   TEXT,
+  issued_at          TEXT,
+  activated_at       TEXT,
+  expires_at         TEXT,
+  revoked_at         TEXT,
+  revoked_by         INTEGER,
+  order_id           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_keys_status ON keys(status);
+CREATE INDEX IF NOT EXISTS idx_keys_target ON keys(target_telegram_id);
+CREATE INDEX IF NOT EXISTS idx_keys_username ON keys(target_username);
+CREATE INDEX IF NOT EXISTS idx_keys_marzban ON keys(marzban_username);
 
 `;
 
@@ -143,6 +172,52 @@ const toOrder = (row: OrderRow): OrderRecord => ({
   paidAt: row.paid_at,
 });
 
+interface KeyRow {
+  code: string;
+  plan_code: string;
+  plan_name: string;
+  days: number;
+  traffic_limit_gb: number | null;
+  status: string;
+  note: string | null;
+  created_by: number | null;
+  created_at: string;
+  target_telegram_id: number | null;
+  target_username: string | null;
+  marzban_username: string | null;
+  subscription_url: string | null;
+  issued_at: string | null;
+  activated_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  revoked_by: number | null;
+  order_id: string | null;
+}
+
+const toKey = (row: KeyRow): KeyRecord => ({
+  code: row.code,
+  planCode: row.plan_code,
+  planName: row.plan_name,
+  days: Number(row.days),
+  trafficLimitGb:
+    row.traffic_limit_gb === null ? null : Number(row.traffic_limit_gb),
+  status: row.status as KeyStatus,
+  note: row.note,
+  createdBy: row.created_by === null ? null : Number(row.created_by),
+  createdAt: row.created_at,
+  targetTelegramId:
+    row.target_telegram_id === null ? null : Number(row.target_telegram_id),
+  targetUsername: row.target_username,
+  marzbanUsername: row.marzban_username,
+  subscriptionUrl: row.subscription_url,
+  issuedAt: row.issued_at,
+  activatedAt: row.activated_at,
+  expiresAt: row.expires_at,
+  revokedAt: row.revoked_at,
+  revokedBy: row.revoked_by === null ? null : Number(row.revoked_by),
+  orderId: row.order_id,
+});
+
 export function audit(actor: number | null, action: string, entity?: string): void {
   raw
     .prepare(
@@ -188,6 +263,16 @@ export function getUser(telegramId: number): UserRecord | undefined {
   const row = raw
     .prepare("SELECT * FROM users WHERE telegram_id = ?")
     .get(telegramId) as UserRow | undefined;
+  return row ? toUser(row) : undefined;
+}
+
+/** Поиск пользователя по `@username` (без собаки, регистр не важен). */
+export function findUserByUsername(username: string): UserRecord | undefined {
+  const normalized = username.trim().replace(/^@/, "").toLowerCase();
+  if (!normalized) return undefined;
+  const row = raw
+    .prepare("SELECT * FROM users WHERE lower(username) = ? LIMIT 1")
+    .get(normalized) as UserRow | undefined;
   return row ? toUser(row) : undefined;
 }
 
@@ -238,6 +323,16 @@ export function saveSubscription(update: SubscriptionUpdate): void {
       update.subscriptionUrl,
       update.telegramId,
     );
+}
+
+/** Меняет только срок подписки (например, при отзыве всех ключей). */
+export function setSubscriptionExpiry(
+  telegramId: number,
+  expiresAt: string,
+): void {
+  raw
+    .prepare("UPDATE users SET subscription_expires_at = ? WHERE telegram_id = ?")
+    .run(expiresAt, telegramId);
 }
 
 export function createOrder(input: {
@@ -346,8 +441,16 @@ export function stats(): {
 
 // --- Админы, состояния диалога и обращения в поддержку ---
 
-/** Состояние диалога: чего бот ждёт от следующего сообщения пользователя. */
-export type UserState = "support" | "admin_add";
+/**
+ * Состояние диалога: чего бот ждёт от следующего сообщения пользователя.
+ * Состояния выдачи ключа несут код в самом значении — `key_issue_target:ENT-…`.
+ */
+export type UserState =
+  | "support"
+  | "admin_add"
+  | "key_lookup"
+  | "key_issue_code"
+  | `key_issue_target:${string}`;
 
 export function addAdmin(telegramId: number, addedBy: number | null): void {
   raw
@@ -396,6 +499,198 @@ export function getUserState(telegramId: number): UserState | undefined {
 
 export function clearUserState(telegramId: number): void {
   raw.prepare("DELETE FROM user_states WHERE telegram_id = ?").run(telegramId);
+}
+
+// --- Ключи доступа ---
+
+export interface KeyCreateInput {
+  code: string;
+  planCode: string;
+  planName: string;
+  days: number;
+  trafficLimitGb: number | null;
+  status: KeyStatus;
+  note?: string | null;
+  createdBy?: number | null;
+  targetTelegramId?: number | null;
+  targetUsername?: string | null;
+  marzbanUsername?: string | null;
+  subscriptionUrl?: string | null;
+  issuedAt?: string | null;
+  activatedAt?: string | null;
+  expiresAt?: string | null;
+  orderId?: string | null;
+}
+
+export function createKeyRecord(input: KeyCreateInput): KeyRecord {
+  raw
+    .prepare(
+      `INSERT INTO keys (
+         code, plan_code, plan_name, days, traffic_limit_gb, status, note,
+         created_by, created_at, target_telegram_id, target_username,
+         marzban_username, subscription_url, issued_at, activated_at,
+         expires_at, order_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.code,
+      input.planCode,
+      input.planName,
+      input.days,
+      input.trafficLimitGb,
+      input.status,
+      input.note ?? null,
+      input.createdBy ?? null,
+      nowIso(),
+      input.targetTelegramId ?? null,
+      input.targetUsername ?? null,
+      input.marzbanUsername ?? null,
+      input.subscriptionUrl ?? null,
+      input.issuedAt ?? null,
+      input.activatedAt ?? null,
+      input.expiresAt ?? null,
+      input.orderId ?? null,
+    );
+  return getKey(input.code) as KeyRecord;
+}
+
+/** Поля ключа, которые можно обновить. `undefined` — не трогать. */
+export interface KeyUpdate {
+  planCode?: string;
+  planName?: string;
+  days?: number;
+  trafficLimitGb?: number | null;
+  status?: KeyStatus;
+  note?: string | null;
+  targetTelegramId?: number | null;
+  targetUsername?: string | null;
+  marzbanUsername?: string | null;
+  subscriptionUrl?: string | null;
+  issuedAt?: string | null;
+  activatedAt?: string | null;
+  expiresAt?: string | null;
+  revokedAt?: string | null;
+  revokedBy?: number | null;
+  orderId?: string | null;
+}
+
+const KEY_COLUMNS: Record<keyof KeyUpdate, string> = {
+  planCode: "plan_code",
+  planName: "plan_name",
+  days: "days",
+  trafficLimitGb: "traffic_limit_gb",
+  status: "status",
+  note: "note",
+  targetTelegramId: "target_telegram_id",
+  targetUsername: "target_username",
+  marzbanUsername: "marzban_username",
+  subscriptionUrl: "subscription_url",
+  issuedAt: "issued_at",
+  activatedAt: "activated_at",
+  expiresAt: "expires_at",
+  revokedAt: "revoked_at",
+  revokedBy: "revoked_by",
+  orderId: "order_id",
+};
+
+export function updateKeyRecord(code: string, patch: KeyUpdate): void {
+  const entries = Object.entries(patch).filter(
+    ([, value]) => value !== undefined,
+  ) as [keyof KeyUpdate, unknown][];
+  if (entries.length === 0) return;
+  const assignments = entries.map(([field]) => `${KEY_COLUMNS[field]} = ?`);
+  const values = entries.map(([, value]) => value as string | number | null);
+  raw
+    .prepare(`UPDATE keys SET ${assignments.join(", ")} WHERE code = ?`)
+    .run(...values, code);
+}
+
+export function getKey(code: string): KeyRecord | undefined {
+  const row = raw
+    .prepare("SELECT * FROM keys WHERE code = ?")
+    .get(code.trim().toUpperCase()) as KeyRow | undefined;
+  return row ? toKey(row) : undefined;
+}
+
+export function listKeys(limit = 5, offset = 0): KeyRecord[] {
+  const rows = raw
+    .prepare(
+      "SELECT * FROM keys ORDER BY created_at DESC, code DESC LIMIT ? OFFSET ?",
+    )
+    .all(limit, offset) as unknown as KeyRow[];
+  return rows.map(toKey);
+}
+
+export function countKeys(): number {
+  const row = raw.prepare("SELECT COUNT(*) AS c FROM keys").get() as
+    | { c: number }
+    | undefined;
+  return row ? Number(row.c) : 0;
+}
+
+export function listKeysByTarget(telegramId: number): KeyRecord[] {
+  const rows = raw
+    .prepare(
+      "SELECT * FROM keys WHERE target_telegram_id = ? ORDER BY created_at DESC",
+    )
+    .all(telegramId) as unknown as KeyRow[];
+  return rows.map(toKey);
+}
+
+export function listKeysByUsername(username: string): KeyRecord[] {
+  const normalized = username.trim().replace(/^@/, "").toLowerCase();
+  const rows = raw
+    .prepare(
+      "SELECT * FROM keys WHERE target_username = ? ORDER BY created_at DESC",
+    )
+    .all(normalized) as unknown as KeyRow[];
+  return rows.map(toKey);
+}
+
+export function listKeysByMarzbanUsername(
+  marzbanUsername: string,
+): KeyRecord[] {
+  const rows = raw
+    .prepare(
+      "SELECT * FROM keys WHERE marzban_username = ? ORDER BY created_at DESC",
+    )
+    .all(marzbanUsername) as unknown as KeyRow[];
+  return rows.map(toKey);
+}
+
+/** Переводит активные ключи с истёкшим сроком в статус `expired`. */
+export function markExpiredKeys(): number {
+  const result = raw
+    .prepare(
+      `UPDATE keys SET status = 'expired'
+       WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= ?`,
+    )
+    .run(nowIso());
+  return Number(result.changes);
+}
+
+export function keyCounts(): {
+  total: number;
+  fresh: number;
+  issued: number;
+  active: number;
+  revoked: number;
+  expired: number;
+} {
+  const one = (status: KeyStatus): number => {
+    const row = raw
+      .prepare("SELECT COUNT(*) AS c FROM keys WHERE status = ?")
+      .get(status) as { c: number } | undefined;
+    return row ? Number(row.c) : 0;
+  };
+  return {
+    total: countKeys(),
+    fresh: one("new"),
+    issued: one("issued"),
+    active: one("active"),
+    revoked: one("revoked"),
+    expired: one("expired"),
+  };
 }
 
 export function closeDatabase(): void {

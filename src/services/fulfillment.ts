@@ -29,7 +29,9 @@ export async function fulfillPaidOrder(
 
   setOrderStatus(orderId, "provisioning");
   try {
-    const subscription = await activatePlan(order.telegramId, order.planCode);
+    const subscription = await activatePlan(order.telegramId, order.planCode, {
+      orderId: order.id,
+    });
     setOrderStatus(orderId, "active");
     audit(order.telegramId, "subscription_activated", `${orderId}:${order.planCode}`);
     return { ok: true, subscription, telegramId: order.telegramId };

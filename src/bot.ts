@@ -27,8 +27,19 @@ import {
   upsertUser,
 } from "./db.js";
 import { errorInfo, logger } from "./logger.js";
-import { getPlan } from "./plans.js";
+import { PLANS, getPlan } from "./plans.js";
 import { fulfillPaidOrder } from "./services/fulfillment.js";
+import {
+  createKeys,
+  getKey,
+  issueKey,
+  keysSummary,
+  listKeysPage,
+  resolvePendingKeys,
+  revokeKey,
+  type IssueResult,
+  type IssueTarget,
+} from "./services/keys.js";
 import { confirmPayment, createPayment } from "./services/payments.js";
 import { activatePlan, startTrial } from "./services/subscriptions.js";
 import { buildClientOptions, syncChatCommands } from "./telegram.js";
@@ -38,10 +49,15 @@ import {
   adminKeyboard,
   adminsKeyboard,
   isMainMenuLabel,
+  keyCardKeyboard,
+  keyListKeyboard,
+  keyPlansKeyboard,
+  keyRevokeConfirmKeyboard,
   mainKeyboard,
   payKeyboard,
   plansKeyboard,
   supportKeyboard,
+  keysKeyboard,
 } from "./ui/keyboards.js";
 import {
   adminAddPromptText,
@@ -50,6 +66,22 @@ import {
   adminPanelText,
   adminStatsText,
   helpText,
+  keyCardText,
+  keyCreatedText,
+  keyHelpText,
+  keyIssueCodePromptText,
+  keyIssueTargetPromptText,
+  keyIssuedText,
+  keyIssuedToUserText,
+  keyListText,
+  keyLookupPromptText,
+  keyNotFoundText,
+  keyPlansPromptText,
+  keyRevokeConfirmText,
+  keyRevokedText,
+  keyRevokedToUserText,
+  keyStatusLabel,
+  keysPanelText,
   offerText,
   paymentCreatedText,
   paymentSuccessText,
@@ -120,6 +152,41 @@ export function createBot(): Bot {
       // Кнопка меню всегда выходит из режима поддержки и ввода ID админа.
       const userId = ctx.from?.id;
       if (userId !== undefined) clearUserState(userId);
+    }
+    await next();
+  });
+
+  /**
+   * Привязка «висящих» ключей. Ключ, выданный по `@username`, ждёт первого
+   * появления получателя: здесь мы узнаём его Telegram ID и активируем доступ.
+   */
+  bot.use(async (ctx, next) => {
+    const from = ctx.from;
+    if (from?.username) {
+      upsertUser({
+        telegramId: from.id,
+        username: from.username,
+        firstName: from.first_name ?? null,
+      });
+      try {
+        const bound = await resolvePendingKeys({
+          telegramId: from.id,
+          username: from.username,
+        });
+        for (const key of bound) {
+          audit(from.id, "key_bound", key.code);
+          await ctx.api
+            .sendMessage(from.id, keyIssuedToUserText(key), {
+              parse_mode: "Markdown",
+            })
+            .catch(() => undefined);
+        }
+      } catch (error) {
+        logger.warn(
+          { err: errorInfo(error) },
+          "не удалось привязать ключ по @username",
+        );
+      }
     }
     await next();
   });
@@ -372,6 +439,133 @@ export function createBot(): Bot {
     await startCheckout(ctx, ctx.match[1] ?? "");
   });
 
+  // --- Ключи доступа ---
+  bot.callbackQuery("key:panel", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(ctx, keysPanelText(keysSummary()), keysKeyboard());
+  });
+
+  bot.callbackQuery("key:new", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(ctx, keyPlansPromptText(), keyPlansKeyboard());
+  });
+
+  bot.callbackQuery(/^key:create:(.+)$/, async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const planCode = ctx.match[1] ?? "";
+    let created: ReturnType<typeof createKeys>;
+    try {
+      created = createKeys({ planCode, createdBy: fromId(ctx), count: 1 });
+    } catch {
+      await ctx.answerCallbackQuery({
+        text: "Неизвестный тариф",
+        show_alert: true,
+      });
+      return;
+    }
+    const key = created[0];
+    if (!key) return;
+    audit(fromId(ctx), "key_created", `${key.code}:${planCode}`);
+    await ctx.answerCallbackQuery({ text: "Ключ создан" });
+    await replyMarkdown(
+      ctx,
+      keyCreatedText(created),
+      keyCardKeyboard(key.code, key.status),
+    );
+  });
+
+  bot.callbackQuery(/^key:list:(\d+)$/, async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await ctx.answerCallbackQuery();
+    await showKeyList(ctx, Number(ctx.match[1] ?? 0));
+  });
+
+  bot.callbackQuery(/^key:view:(.+)$/, async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await ctx.answerCallbackQuery();
+    await showKeyCard(ctx, ctx.match[1] ?? "");
+  });
+
+  bot.callbackQuery("key:find", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    setUserState(fromId(ctx), "key_lookup");
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(ctx, keyLookupPromptText());
+  });
+
+  bot.callbackQuery("key:issue", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    setUserState(fromId(ctx), "key_issue_code");
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(ctx, keyIssueCodePromptText());
+  });
+
+  bot.callbackQuery(/^key:issue:(.+)$/, async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const code = ctx.match[1] ?? "";
+    if (!getKey(code)) {
+      await ctx.answerCallbackQuery({
+        text: "Ключ не найден",
+        show_alert: true,
+      });
+      return;
+    }
+    setUserState(fromId(ctx), `key_issue_target:${code}`);
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(ctx, keyIssueTargetPromptText(code));
+  });
+
+  bot.callbackQuery(/^key:revoke:(.+)$/, async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const key = getKey(ctx.match[1] ?? "");
+    if (!key) {
+      await ctx.answerCallbackQuery({
+        text: "Ключ не найден",
+        show_alert: true,
+      });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(
+      ctx,
+      keyRevokeConfirmText(key),
+      keyRevokeConfirmKeyboard(key.code),
+    );
+  });
+
+  bot.callbackQuery(/^key:revokeok:(.+)$/, async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const code = ctx.match[1] ?? "";
+    const result = await revokeKey({ code, actor: fromId(ctx) });
+    if (!result.ok) {
+      await ctx.answerCallbackQuery({
+        text:
+          result.reason === "already_revoked" ? "Уже отозван" : "Ключ не найден",
+        show_alert: true,
+      });
+      return;
+    }
+    audit(fromId(ctx), "key_revoked", code);
+    await ctx.answerCallbackQuery({ text: "Ключ отозван" });
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await replyMarkdown(
+      ctx,
+      keyRevokedText(result),
+      keyCardKeyboard(result.key.code, result.key.status),
+    );
+    if (result.key.targetTelegramId) {
+      await ctx.api
+        .sendMessage(
+          result.key.targetTelegramId,
+          keyRevokedToUserText(result.key),
+          { parse_mode: "Markdown" },
+        )
+        .catch(() => undefined);
+    }
+  });
+
   bot.callbackQuery("sub:renew", async (ctx) => {
     await ctx.answerCallbackQuery();
     await replyMarkdown(ctx, planListText(), plansKeyboard());
@@ -519,9 +713,119 @@ export function createBot(): Bot {
     }
   });
 
+  bot.command("key", async (ctx) => {
+    if (!isAdmin(fromId(ctx))) return;
+    const parts = ctx.match.trim().split(/\s+/).filter(Boolean);
+    const action = parts[0] ?? "";
+    const rest = parts.slice(1);
+
+    switch (action) {
+      case "": {
+        await replyMarkdown(ctx, keyHelpText());
+        return;
+      }
+      case "new": {
+        const planCode = rest[0] ?? "";
+        const note = rest.slice(1).join(" ") || null;
+        let created: ReturnType<typeof createKeys>;
+        try {
+          created = createKeys({
+            planCode,
+            createdBy: fromId(ctx),
+            note,
+            count: 1,
+          });
+        } catch {
+          await replyMarkdown(
+            ctx,
+            `Неизвестный тариф: \`${planCode}\`. Доступные: ${PLANS.map((plan) => `\`${plan.code}\``).join(", ")}.`,
+          );
+          return;
+        }
+        const key = created[0];
+        if (!key) return;
+        audit(fromId(ctx), "key_created", `${key.code}:${planCode}`);
+        await replyMarkdown(
+          ctx,
+          keyCreatedText(created),
+          keyCardKeyboard(key.code, key.status),
+        );
+        return;
+      }
+      case "list": {
+        await showKeyList(ctx, 0);
+        return;
+      }
+      case "info": {
+        await showKeyCard(ctx, rest[0] ?? "");
+        return;
+      }
+      case "issue": {
+        const code = rest[0] ?? "";
+        const raw = rest[1] ?? "";
+        if (!code || !raw) {
+          await replyMarkdown(
+            ctx,
+            "Использование: `/key issue <код> <telegram_id|@username>`",
+          );
+          return;
+        }
+        const target: IssueTarget = /^\d+$/.test(raw)
+          ? { telegramId: Number(raw) }
+          : { username: raw };
+        await performKeyIssue(ctx, code, target);
+        return;
+      }
+      case "revoke": {
+        const code = rest[0] ?? "";
+        const result = await revokeKey({ code, actor: fromId(ctx) });
+        if (!result.ok) {
+          await replyMarkdown(
+            ctx,
+            result.reason === "already_revoked"
+              ? `🚫 Ключ \`${code}\` уже отозван.`
+              : keyNotFoundText(code),
+          );
+          return;
+        }
+        audit(fromId(ctx), "key_revoked", code);
+        await replyMarkdown(ctx, keyRevokedText(result), keysKeyboard());
+        if (result.key.targetTelegramId) {
+          await ctx.api
+            .sendMessage(
+              result.key.targetTelegramId,
+              keyRevokedToUserText(result.key),
+              { parse_mode: "Markdown" },
+            )
+            .catch(() => undefined);
+        }
+        return;
+      }
+      case "link": {
+        const key = getKey(rest[0] ?? "");
+        if (!key) {
+          await replyMarkdown(ctx, keyNotFoundText(rest[0] ?? ""));
+          return;
+        }
+        if (!key.subscriptionUrl) {
+          await replyMarkdown(
+            ctx,
+            `Ключ \`${key.code}\` ещё не активирован — ссылки нет.`,
+          );
+          return;
+        }
+        await replyMarkdown(ctx, `🔗 \`${key.subscriptionUrl}\``);
+        return;
+      }
+      default: {
+        await replyMarkdown(ctx, keyHelpText());
+      }
+    }
+  });
+
   /**
    * Сообщения, которые не являются командами или кнопками меню: обращения
-   * в поддержку и ввод ID нового админа.
+   * в поддержку, ввод ID нового админа и шаги выдачи ключа.
    */
   bot.on("message", async (ctx) => {
     const message = ctx.message;
@@ -529,6 +833,39 @@ export function createBot(): Bot {
     if (!message || !from) return;
 
     const state = getUserState(from.id);
+
+    if (state === "key_lookup") {
+      clearUserState(from.id);
+      if (!isAdmin(from.id)) return;
+      await showKeyCard(ctx, (message.text ?? "").trim());
+      return;
+    }
+
+    if (state === "key_issue_code") {
+      clearUserState(from.id);
+      if (!isAdmin(from.id)) return;
+      const code = (message.text ?? "").trim();
+      const key = getKey(code);
+      if (!key) {
+        await replyMarkdown(ctx, keyNotFoundText(code), keysKeyboard());
+        return;
+      }
+      setUserState(from.id, `key_issue_target:${key.code}`);
+      await replyMarkdown(ctx, keyIssueTargetPromptText(key.code));
+      return;
+    }
+
+    if (state?.startsWith("key_issue_target:")) {
+      clearUserState(from.id);
+      if (!isAdmin(from.id)) return;
+      const code = state.slice("key_issue_target:".length);
+      const raw = (message.text ?? "").trim();
+      const target: IssueTarget = /^\d+$/.test(raw)
+        ? { telegramId: Number(raw) }
+        : { username: raw };
+      await performKeyIssue(ctx, code, target);
+      return;
+    }
 
     if (state === "admin_add") {
       clearUserState(from.id);
@@ -665,6 +1002,85 @@ export function createBot(): Bot {
     await ctx.answerCallbackQuery();
     await sendSubscription(ctx);
   });
+
+  async function showKeyList(ctx: Context, page: number): Promise<void> {
+    const data = listKeysPage(page);
+    await replyMarkdown(
+      ctx,
+      keyListText(data),
+      keyListKeyboard(data.items, data.page, data.pages, keyStatusLabel),
+    );
+  }
+
+  async function showKeyCard(ctx: Context, code: string): Promise<void> {
+    const key = getKey(code);
+    if (!key) {
+      await replyMarkdown(ctx, keyNotFoundText(code), keysKeyboard());
+      return;
+    }
+    await replyMarkdown(
+      ctx,
+      keyCardText(key),
+      keyCardKeyboard(key.code, key.status),
+    );
+  }
+
+  async function performKeyIssue(
+    ctx: Context,
+    code: string,
+    target: IssueTarget,
+  ): Promise<void> {
+    const actor = fromId(ctx);
+    let result: IssueResult;
+    try {
+      result = await issueKey({ code, target, actor });
+    } catch (error) {
+      logger.error({ err: errorInfo(error), code }, "не удалось выдать ключ");
+      await replyMarkdown(
+        ctx,
+        "⚠️ Не удалось выдать ключ — ошибка Marzban. Проверьте логи.",
+        keysKeyboard(),
+      );
+      return;
+    }
+    if (!result.ok) {
+      const text =
+        result.reason === "not_found"
+          ? keyNotFoundText(code)
+          : result.reason === "revoked"
+            ? `🚫 Ключ \`${code}\` отозван — выдать нельзя.`
+            : "Некорректный получатель. Укажите Telegram ID или `@username`.";
+      await replyMarkdown(ctx, text, keysKeyboard());
+      return;
+    }
+    audit(
+      actor,
+      "key_issued",
+      `${code}:${
+        result.pending
+          ? (result.key.targetUsername ?? "username")
+          : (result.telegramId ?? "unknown")
+      }`,
+    );
+    await replyMarkdown(
+      ctx,
+      keyIssuedText(result),
+      keyCardKeyboard(result.key.code, result.key.status),
+    );
+    const recipient = result.telegramId;
+    if (recipient !== undefined && !result.pending) {
+      await ctx.api
+        .sendMessage(recipient, keyIssuedToUserText(result.key), {
+          parse_mode: "Markdown",
+        })
+        .catch((error) => {
+          logger.warn(
+            { err: errorInfo(error), telegramId: recipient },
+            "не удалось уведомить получателя ключа",
+          );
+        });
+    }
+  }
 
   return bot;
 }
