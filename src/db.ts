@@ -7,6 +7,8 @@ import type {
   KeyStatus,
   OrderRecord,
   OrderStatus,
+  RequestRecord,
+  RequestStatus,
   UserRecord,
 } from "./types.js";
 
@@ -88,6 +90,27 @@ CREATE INDEX IF NOT EXISTS idx_keys_status ON keys(status);
 CREATE INDEX IF NOT EXISTS idx_keys_target ON keys(target_telegram_id);
 CREATE INDEX IF NOT EXISTS idx_keys_username ON keys(target_username);
 CREATE INDEX IF NOT EXISTS idx_keys_marzban ON keys(marzban_username);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS requests (
+  id          TEXT PRIMARY KEY,
+  telegram_id INTEGER NOT NULL,
+  username    TEXT,
+  plan_code   TEXT NOT NULL,
+  comment     TEXT,
+  status      TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  resolved_at TEXT,
+  resolved_by INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
+CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(telegram_id);
 
 `;
 
@@ -219,6 +242,30 @@ const toKey = (row: KeyRow): KeyRecord => ({
   revokedAt: row.revoked_at,
   revokedBy: row.revoked_by === null ? null : Number(row.revoked_by),
   orderId: row.order_id,
+});
+
+interface RequestRow {
+  id: string;
+  telegram_id: number;
+  username: string | null;
+  plan_code: string;
+  comment: string | null;
+  status: string;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: number | null;
+}
+
+const toRequest = (row: RequestRow): RequestRecord => ({
+  id: row.id,
+  telegramId: Number(row.telegram_id),
+  username: row.username,
+  planCode: row.plan_code,
+  comment: row.comment,
+  status: row.status as RequestStatus,
+  createdAt: row.created_at,
+  resolvedAt: row.resolved_at,
+  resolvedBy: row.resolved_by === null ? null : Number(row.resolved_by),
 });
 
 export function audit(actor: number | null, action: string, entity?: string): void {
@@ -700,6 +747,109 @@ export function keyCounts(): {
     revoked: one("revoked"),
     expired: one("expired"),
   };
+}
+
+// --- Настройки (переключатели админки) ---
+
+export function getSetting(key: string): string | undefined {
+  const row = raw
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(key) as { value: string } | undefined;
+  return row?.value;
+}
+
+export function setSetting(key: string, value: string): void {
+  raw
+    .prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .run(key, value, nowIso());
+}
+
+// --- Заявки на подписку ---
+
+export interface RequestCreateInput {
+  id: string;
+  telegramId: number;
+  username?: string | null;
+  planCode: string;
+  comment?: string | null;
+}
+
+export function createRequestRecord(input: RequestCreateInput): RequestRecord {
+  raw
+    .prepare(
+      `INSERT INTO requests (id, telegram_id, username, plan_code, comment, status, created_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+    )
+    .run(
+      input.id,
+      input.telegramId,
+      input.username ?? null,
+      input.planCode,
+      input.comment ?? null,
+      nowIso(),
+    );
+  return getRequest(input.id) as RequestRecord;
+}
+
+export function getRequest(id: string): RequestRecord | undefined {
+  const row = raw
+    .prepare("SELECT * FROM requests WHERE id = ?")
+    .get(id) as RequestRow | undefined;
+  return row ? toRequest(row) : undefined;
+}
+
+export function listRequests(
+  status: RequestStatus | null = "pending",
+  limit = 10,
+): RequestRecord[] {
+  const rows = (
+    status === null
+      ? raw
+          .prepare(
+            "SELECT * FROM requests ORDER BY created_at DESC LIMIT ?",
+          )
+          .all(limit)
+      : raw
+          .prepare(
+            "SELECT * FROM requests WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+          )
+          .all(status, limit)
+  ) as unknown as RequestRow[];
+  return rows.map(toRequest);
+}
+
+export function countRequests(status: RequestStatus): number {
+  const row = raw
+    .prepare("SELECT COUNT(*) AS c FROM requests WHERE status = ?")
+    .get(status) as { c: number } | undefined;
+  return row ? Number(row.c) : 0;
+}
+
+/** Незакрытая заявка пользователя — чтобы не плодить дубли. */
+export function findPendingRequest(
+  telegramId: number,
+): RequestRecord | undefined {
+  const row = raw
+    .prepare(
+      "SELECT * FROM requests WHERE telegram_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
+    )
+    .get(telegramId) as RequestRow | undefined;
+  return row ? toRequest(row) : undefined;
+}
+
+export function resolveRequest(
+  id: string,
+  status: Exclude<RequestStatus, "pending">,
+  resolvedBy: number | null,
+): void {
+  raw
+    .prepare(
+      "UPDATE requests SET status = ?, resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending'",
+    )
+    .run(status, nowIso(), resolvedBy, id);
 }
 
 export function closeDatabase(): void {

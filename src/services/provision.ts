@@ -62,6 +62,75 @@ export async function deleteSubscription(
   );
 }
 
+// --- Сводка для админки ---
+
+export interface MarzbanOverview {
+  /** Всего пользователей в панели. */
+  totalUsers: number;
+  /** Пользователи со статусом `active`. */
+  activeUsers: number;
+  /** Кто был активен за последние `onlineWindowMinutes`. */
+  online: Array<{ username: string; usedTrafficBytes: number }>;
+  /** Суммарный израсходованный трафик всех пользователей. */
+  totalTrafficBytes: number;
+}
+
+interface MarzbanUserListResponse {
+  users: Array<{
+    username: string;
+    status: string;
+    online_at: string | null;
+    used_traffic: number;
+  }>;
+  total: number;
+}
+
+/**
+ * Marzban отдаёт время без зоны и с шестью знаками после точки
+ * (`2026-11-07T18:57:04.724909`) — приводим к тому, что понимает `Date`,
+ * считая такие значения UTC.
+ */
+function parseMarzbanTime(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim().replace(/\.(\d{3})\d*/, ".$1");
+  const hasZone = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(trimmed);
+  const ms = new Date(hasZone ? trimmed : `${trimmed}Z`).getTime();
+  return Number.isNaN(ms) ? undefined : ms;
+}
+
+/** Сводка по VPN для админки. `undefined` — Marzban недоступен (или mock-режим). */
+export async function marzbanOverview(
+  onlineWindowMinutes = 5,
+): Promise<MarzbanOverview | undefined> {
+  if (config.mockMode) return undefined;
+  try {
+    const data = (await marzbanRequest(
+      "GET",
+      "/api/users?limit=100",
+    )) as MarzbanUserListResponse;
+    const users = data.users ?? [];
+    const threshold = Date.now() - onlineWindowMinutes * 60_000;
+    const online = users.filter((user) => {
+      const at = parseMarzbanTime(user.online_at);
+      return at !== undefined && at >= threshold;
+    });
+    return {
+      totalUsers: Number(data.total ?? users.length),
+      activeUsers: users.filter((user) => user.status === "active").length,
+      online: online.map((user) => ({
+        username: user.username,
+        usedTrafficBytes: Number(user.used_traffic),
+      })),
+      totalTrafficBytes: users.reduce(
+        (sum, user) => sum + Number(user.used_traffic),
+        0,
+      ),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Включает или выключает доступ пользователя в Marzban, не удаляя его:
  * при отзыве ключа подписка ставится в `disabled`, при повторной выдаче — в `active`.

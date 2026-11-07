@@ -104,3 +104,21 @@ export interface KeyRecord {
   /** Заказ, если ключ появился из оплаты. */
   orderId: string | null;
 }
+
+/** Статус заявки на подписку (когда оплата выключена). */
+export type RequestStatus = "pending" | "approved" | "rejected";
+
+export interface RequestRecord {
+  id: string;
+  telegramId: number;
+  /** `@username` без собаки на момент заявки. */
+  username: string | null;
+  planCode: string;
+  /** Комментарий пользователя (необязателен). */
+  comment: string | null;
+  status: RequestStatus;
+  createdAt: string;
+  resolvedAt: string | null;
+  /** Кто из админов обработал заявку. */
+  resolvedBy: number | null;
+}

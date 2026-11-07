@@ -7,7 +7,7 @@ import {
   type Context,
 } from "grammy";
 import { existsSync } from "node:fs";
-import { isAdmin, isEnvAdmin } from "./admins.js";
+import { allAdminIds, isAdmin, isEnvAdmin } from "./admins.js";
 import { createMessageTracker } from "./chat-cleanup.js";
 import { config } from "./config.js";
 import {
@@ -45,6 +45,15 @@ import {
   createPayment,
   isSimulatedPayment,
 } from "./services/payments.js";
+import { marzbanOverview } from "./services/provision.js";
+import {
+  approveRequest,
+  pendingRequests,
+  pendingRequestsCount,
+  rejectRequest,
+  submitRequest,
+} from "./services/requests.js";
+import { isPaymentsEnabled, setPaymentsEnabled } from "./services/settings.js";
 import { activatePlan, startTrial } from "./services/subscriptions.js";
 import { buildClientOptions, syncChatCommands } from "./telegram.js";
 import {
@@ -59,7 +68,9 @@ import {
   keyRevokeConfirmKeyboard,
   mainKeyboard,
   payKeyboard,
+  paymentsKeyboard,
   plansKeyboard,
+  requestsKeyboard,
   supportKeyboard,
   keysKeyboard,
 } from "./ui/keyboards.js";
@@ -67,7 +78,9 @@ import {
   adminAddPromptText,
   adminAddedText,
   adminListText,
+  adminNewRequestText,
   adminPanelText,
+  adminRequestsText,
   adminStatsText,
   helpText,
   keyCardText,
@@ -89,7 +102,12 @@ import {
   offerText,
   paymentCreatedText,
   paymentSuccessText,
+  paymentsPanelText,
   planListText,
+  requestApprovedToUserText,
+  requestDuplicateText,
+  requestRejectedToUserText,
+  requestSubmittedText,
   subscriptionText,
   supportLinkText,
   trialDeniedText,
@@ -224,6 +242,15 @@ export function createBot(): Bot {
         .catch(() => undefined);
     }
     return false;
+  };
+
+  /** Шлёт сообщение всем админам: окружение + назначенные в панели. */
+  const notifyAdmins = async (ctx: Context, text: string): Promise<void> => {
+    for (const adminId of allAdminIds()) {
+      await ctx.api
+        .sendMessage(adminId, text, { parse_mode: "Markdown" })
+        .catch(() => undefined);
+    }
   };
 
   const replyMarkdown = (
@@ -412,8 +439,8 @@ export function createBot(): Bot {
     await sendPhotoScreen(
       ctx,
       config.plansImagePath,
-      planListText(),
-      plansKeyboard(),
+      planListText(isPaymentsEnabled()),
+      plansKeyboard(isPaymentsEnabled()),
     );
   });
 
@@ -439,20 +466,33 @@ export function createBot(): Bot {
   bot.hears(ADMIN_MENU_LABEL, async (ctx) => {
     track(ctx);
     if (!(await requireAdmin(ctx))) return;
-    await replyMarkdown(ctx, adminPanelText(), adminKeyboard());
+    await replyMarkdown(
+      ctx,
+      adminPanelText(),
+      adminKeyboard(pendingRequestsCount()),
+    );
   });
 
   // --- Админ-панель ---
   bot.callbackQuery("adm:panel", async (ctx) => {
     if (!(await requireAdmin(ctx))) return;
     await ctx.answerCallbackQuery();
-    await replyMarkdown(ctx, adminPanelText(), adminKeyboard());
+    await replyMarkdown(
+      ctx,
+      adminPanelText(),
+      adminKeyboard(pendingRequestsCount()),
+    );
   });
 
   bot.callbackQuery("adm:stats", async (ctx) => {
     if (!(await requireAdmin(ctx))) return;
     await ctx.answerCallbackQuery();
-    await replyMarkdown(ctx, adminStatsText(stats()), adminKeyboard());
+    const vpn = await marzbanOverview();
+    await replyMarkdown(
+      ctx,
+      adminStatsText(stats(), vpn),
+      adminKeyboard(pendingRequestsCount()),
+    );
   });
 
   bot.callbackQuery("adm:list", async (ctx) => {
@@ -496,7 +536,162 @@ export function createBot(): Bot {
 
   bot.callbackQuery(/^buy:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
+    if (!isPaymentsEnabled()) {
+      await replyMarkdown(
+        ctx,
+        "💳 Оплата сейчас выключена.\n\nВыберите тариф и оставьте заявку — доступ выдадим вручную.",
+        plansKeyboard(false),
+      );
+      return;
+    }
     await startCheckout(ctx, ctx.match[1] ?? "");
+  });
+
+  // --- Заявки на подписку (когда оплата выключена) ---
+  bot.callbackQuery(/^req:(.+)$/, async (ctx) => {
+    const planCode = ctx.match[1] ?? "";
+    const plan = getPlan(planCode);
+    if (!plan) {
+      await ctx.answerCallbackQuery({
+        text: "Тариф не найден",
+        show_alert: true,
+      });
+      return;
+    }
+    const user = getUser(fromId(ctx));
+    if (user?.banned) {
+      await ctx.answerCallbackQuery({
+        text: "Аккаунт заблокирован",
+        show_alert: true,
+      });
+      return;
+    }
+    const result = submitRequest({
+      telegramId: fromId(ctx),
+      username: user?.username ?? ctx.from?.username ?? null,
+      planCode,
+    });
+    if (!result.ok && result.reason === "already_pending") {
+      await ctx.answerCallbackQuery();
+      await replyMarkdown(
+        ctx,
+        requestDuplicateText(plan.name),
+        plansKeyboard(false),
+      );
+      return;
+    }
+    if (!result.ok) {
+      await ctx.answerCallbackQuery({
+        text: "Не удалось создать заявку",
+        show_alert: true,
+      });
+      return;
+    }
+    audit(fromId(ctx), "request_created", `${result.request.id}:${planCode}`);
+    await ctx.answerCallbackQuery({ text: "Заявка отправлена" });
+    await replyMarkdown(ctx, requestSubmittedText(plan.name));
+    await notifyAdmins(ctx, adminNewRequestText(result.request));
+  });
+
+  bot.callbackQuery("adm:requests", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await ctx.answerCallbackQuery();
+    const requests = pendingRequests();
+    await replyMarkdown(
+      ctx,
+      adminRequestsText(requests),
+      requestsKeyboard(requests),
+    );
+  });
+
+  bot.callbackQuery(/^req:ok:(.+)$/, async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const id = ctx.match[1] ?? "";
+    const result = await approveRequest({ id, actor: fromId(ctx) });
+    if (!result.ok) {
+      await ctx.answerCallbackQuery({
+        text:
+          result.reason === "already_resolved"
+            ? "Заявка уже обработана"
+            : result.reason === "provision_failed"
+              ? "Не удалось выдать доступ — проверьте логи"
+              : "Заявка не найдена",
+        show_alert: true,
+      });
+      return;
+    }
+    audit(fromId(ctx), "request_approved", `${id}:${result.request.planCode}`);
+    await ctx.answerCallbackQuery({ text: "Доступ выдан" });
+    const requests = pendingRequests();
+    await replyMarkdown(
+      ctx,
+      adminRequestsText(requests),
+      requestsKeyboard(requests),
+    );
+    await ctx.api
+      .sendMessage(
+        result.request.telegramId,
+        requestApprovedToUserText(
+          result.subscription.planName,
+          result.subscription.subscriptionUrl,
+          result.subscription.expiresAt,
+        ),
+        { parse_mode: "Markdown" },
+      )
+      .catch(() => undefined);
+  });
+
+  bot.callbackQuery(/^req:no:(.+)$/, async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const id = ctx.match[1] ?? "";
+    const result = rejectRequest({ id, actor: fromId(ctx) });
+    if (!result.ok) {
+      await ctx.answerCallbackQuery({
+        text:
+          result.reason === "already_resolved"
+            ? "Заявка уже обработана"
+            : "Заявка не найдена",
+        show_alert: true,
+      });
+      return;
+    }
+    audit(fromId(ctx), "request_rejected", id);
+    await ctx.answerCallbackQuery({ text: "Заявка отклонена" });
+    const requests = pendingRequests();
+    await replyMarkdown(
+      ctx,
+      adminRequestsText(requests),
+      requestsKeyboard(requests),
+    );
+    await ctx.api
+      .sendMessage(
+        result.request.telegramId,
+        requestRejectedToUserText(),
+        { parse_mode: "Markdown" },
+      )
+      .catch(() => undefined);
+  });
+
+  bot.callbackQuery("adm:payments", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    await ctx.answerCallbackQuery();
+    const enabled = isPaymentsEnabled();
+    await replyMarkdown(
+      ctx,
+      paymentsPanelText(enabled),
+      paymentsKeyboard(enabled),
+    );
+  });
+
+  bot.callbackQuery("adm:payments:toggle", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const next = !isPaymentsEnabled();
+    setPaymentsEnabled(next);
+    audit(fromId(ctx), next ? "payments_enabled" : "payments_disabled");
+    await ctx.answerCallbackQuery({
+      text: next ? "Оплата включена" : "Оплата выключена",
+    });
+    await replyMarkdown(ctx, paymentsPanelText(next), paymentsKeyboard(next));
   });
 
   // --- Ключи доступа ---
@@ -626,8 +821,8 @@ export function createBot(): Bot {
     await sendPhotoScreen(
       ctx,
       config.plansImagePath,
-      planListText(),
-      plansKeyboard(),
+      planListText(isPaymentsEnabled()),
+      plansKeyboard(isPaymentsEnabled()),
     );
   });
 
@@ -935,7 +1130,11 @@ export function createBot(): Bot {
       addAdmin(target, from.id);
       audit(from.id, "admin_added", String(target));
       await syncChatCommands(ctx.api, target, true);
-      await replyMarkdown(ctx, adminAddedText(target), adminKeyboard());
+      await replyMarkdown(
+        ctx,
+        adminAddedText(target),
+        adminKeyboard(pendingRequestsCount()),
+      );
       try {
         const notice = await ctx.api.sendMessage(
           target,
@@ -1049,7 +1248,7 @@ export function createBot(): Bot {
               `🔄 Автопродление: ${user.autoRenew ? "вкл" : "выкл"}`,
               "sub:autorenew",
             )
-        : plansKeyboard();
+        : plansKeyboard(isPaymentsEnabled());
     await replyMarkdown(ctx, text, keyboard);
   }
 

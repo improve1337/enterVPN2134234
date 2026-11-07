@@ -1,6 +1,12 @@
 import { config } from "../config.js";
 import { PLANS, TRIAL, getPlan, trafficLabel } from "../plans.js";
-import type { KeyRecord, KeyStatus, OrderRecord, UserRecord } from "../types.js";
+import type {
+  KeyRecord,
+  KeyStatus,
+  OrderRecord,
+  RequestRecord,
+  UserRecord,
+} from "../types.js";
 
 const brand = config.brandName;
 
@@ -55,14 +61,20 @@ export const helpText = (): string =>
     "Если что-то не работает — напишите сюда через «💬 Поддержка».",
   ].join("\n");
 
-export const planListText = (): string => {
+export const planListText = (paymentsEnabled = true): string => {
   const lines = PLANS.map(
     (plan) =>
       `• *${plan.name}* — ${plan.priceRub} ₽\n   ${trafficLabel(plan.trafficGb)} · до ${plan.deviceLimit} устройств`,
   );
-  return ["💎 *Тарифы*", "", ...lines, "", "Выберите тариф кнопкой ниже."].join(
-    "\n",
-  );
+  return [
+    "💎 *Тарифы*",
+    "",
+    ...lines,
+    "",
+    paymentsEnabled
+      ? "Выберите тариф кнопкой ниже — оплата и выдача автоматические."
+      : "Оплата пока недоступна: выберите тариф и оставьте заявку — доступ выдадим вручную.",
+  ].join("\n");
 };
 
 export const subscriptionText = (
@@ -167,16 +179,149 @@ export const adminStatsText = (data: {
   pendingOrders: number;
   paidOrders: number;
   admins: number;
-}): string =>
-  [
+}, vpn?: VpnStatsView): string => {
+  const lines = [
     "🛠 *Статистика*",
     "",
+    "*Бот*",
     `Пользователей: *${data.users}*`,
     `Активных подписок: *${data.activeSubscriptions}*`,
     `Оплаченных заказов: *${data.paidOrders}*`,
     `Ожидают оплаты: *${data.pendingOrders}*`,
     `Админов в панели: *${data.admins}*`,
+  ];
+  if (vpn) {
+    const names = vpn.online.slice(0, 10).map((user) => `\`${user.username}\``);
+    const rest = vpn.online.length - names.length;
+    lines.push(
+      "",
+      "*VPN (Marzban)*",
+      `Пользователей: *${vpn.totalUsers}*`,
+      `Активных: *${vpn.activeUsers}*`,
+      `Онлайн (5 мин): *${vpn.online.length}*${
+        names.length ? ` — ${names.join(", ")}${rest > 0 ? ` и ещё ${rest}` : ""}` : ""
+      }`,
+      `Трафик всего: *${formatBytes(vpn.totalTrafficBytes)}*`,
+    );
+  } else {
+    lines.push("", "*VPN (Marzban)*", "нет данных — панель недоступна");
+  }
+  return lines.join("\n");
+};
+
+/** Данные VPN для экрана статистики. */
+export interface VpnStatsView {
+  totalUsers: number;
+  activeUsers: number;
+  online: Array<{ username: string }>;
+  totalTrafficBytes: number;
+}
+
+/** Человекочитаемый размер: 1536 → «1.5 КБ». */
+export const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 Б";
+  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
+  const index = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
+  );
+  const value = bytes / 1024 ** index;
+  const digits = index === 0 || value >= 100 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[index]}`;
+};
+
+// --- Заявки и оплата ---
+
+export const paymentsPanelText = (enabled: boolean): string =>
+  [
+    "💳 *Оплата*",
+    "",
+    enabled
+      ? "Статус: *включена* — пользователи покупают тарифы сами, выдача автоматическая."
+      : "Статус: *выключена* — вместо покупки пользователи оставляют заявку, вы обрабатываете её вручную.",
+    "",
+    enabled
+      ? "Нажмите кнопку ниже, чтобы выключить оплату и перейти на заявки."
+      : "Нажмите кнопку ниже, чтобы включить оплату (нужна настроенная платёжка).",
   ].join("\n");
+
+export const requestSubmittedText = (planName: string): string =>
+  [
+    "📨 *Заявка отправлена*",
+    "",
+    `Тариф: *${planName}*`,
+    "",
+    "Мы получили заявку и выдадим доступ вручную — ссылка придёт сюда же.",
+  ].join("\n");
+
+export const requestDuplicateText = (planName: string): string =>
+  [
+    "⏳ *Заявка уже отправлена*",
+    "",
+    `Тариф: *${planName}*`,
+    "",
+    "Она ждёт обработки. Как только доступ выдадут — придёт ссылка.",
+  ].join("\n");
+
+export const requestApprovedToUserText = (
+  planName: string,
+  subscriptionUrl: string,
+  expiresAt: string,
+): string =>
+  [
+    "✅ *Заявка одобрена — доступ выдан!*",
+    "",
+    `Тариф: *${planName}*`,
+    `Активен до: *${fmtDate(expiresAt)}*`,
+    "",
+    "🔗 Ссылка-подписка:",
+    `\`${subscriptionUrl}\``,
+    "",
+    "Импортируйте её в клиент и подключайтесь.",
+  ].join("\n");
+
+export const requestRejectedToUserText = (): string =>
+  ["❌ *Заявка отклонена*", "", "Если это ошибка — напишите в поддержку."].join(
+    "\n",
+  );
+
+export const adminRequestsText = (requests: readonly RequestRecord[]): string => {
+  if (requests.length === 0) {
+    return ["📨 *Заявки*", "", "Новых заявок нет."].join("\n");
+  }
+  const lines = requests.map((request) => {
+    const who = request.username
+      ? `@${request.username}`
+      : `ID \`${request.telegramId}\``;
+    return [
+      `• ${who} — *${planNameByCode(request.planCode)}*`,
+      `   ${fmtDate(request.createdAt)}`,
+      ...(request.comment ? [`   💬 ${request.comment}`] : []),
+    ].join("\n");
+  });
+  return [
+    `📨 *Заявки* (${requests.length})`,
+    "",
+    ...lines,
+    "",
+    "✅ — выдать доступ, ❌ — отклонить.",
+  ].join("\n");
+};
+
+export const adminNewRequestText = (request: RequestRecord): string => {
+  const who = request.username
+    ? `@${request.username}`
+    : `ID \`${request.telegramId}\``;
+  return [
+    "📨 *Новая заявка*",
+    "",
+    `От: ${who}`,
+    `Тариф: *${planNameByCode(request.planCode)}*`,
+    ...(request.comment ? [`💬 ${request.comment}`] : []),
+    "",
+    "Обработать: «🛠 Админка» → «📨 Заявки».",
+  ].join("\n");
+};
 
 export const adminPanelText = (): string =>
   [

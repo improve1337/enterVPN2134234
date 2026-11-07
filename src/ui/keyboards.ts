@@ -1,6 +1,11 @@
 import { InlineKeyboard, Keyboard } from "grammy";
 import { PLANS } from "../plans.js";
-import type { KeyRecord, KeyStatus, OrderRecord } from "../types.js";
+import type {
+  KeyRecord,
+  KeyStatus,
+  OrderRecord,
+  RequestRecord,
+} from "../types.js";
 
 /** Подписи кнопок главного меню: используются и в клавиатуре, и в чистке чата. */
 export const OFFER_MENU_LABEL = "📄 Оферта и правила";
@@ -35,7 +40,7 @@ export const mainKeyboard = (isAdmin: boolean): Keyboard => {
   return keyboard.resized().persistent();
 };
 
-export const adminKeyboard = (): InlineKeyboard =>
+export const adminKeyboard = (pendingRequests = 0): InlineKeyboard =>
   new InlineKeyboard()
     .text("👥 Админы", "adm:list")
     .row()
@@ -43,7 +48,39 @@ export const adminKeyboard = (): InlineKeyboard =>
     .row()
     .text("📊 Статистика", "adm:stats")
     .row()
-    .text("🔑 Ключи", "key:panel");
+    .text("🔑 Ключи", "key:panel")
+    .row()
+    .text(
+      `📨 Заявки${pendingRequests > 0 ? ` (${pendingRequests})` : ""}`,
+      "adm:requests",
+    )
+    .row()
+    .text("💳 Оплата", "adm:payments");
+
+/** Панель оплаты: переключатель «включить/выключить». */
+export const paymentsKeyboard = (enabled: boolean): InlineKeyboard =>
+  new InlineKeyboard()
+    .text(
+      enabled ? "🔴 Выключить оплату" : "🟢 Включить оплату",
+      "adm:payments:toggle",
+    )
+    .row()
+    .text("⬅️ Назад", "adm:panel");
+
+/** Заявки: по строке на заявку — одобрить и отклонить. */
+export const requestsKeyboard = (
+  requests: readonly RequestRecord[],
+): InlineKeyboard => {
+  const keyboard = new InlineKeyboard();
+  for (const request of requests) {
+    const who = request.username ? `@${request.username}` : String(request.telegramId);
+    keyboard
+      .text(`✅ ${who}`, `req:ok:${request.id}`)
+      .text("❌", `req:no:${request.id}`)
+      .row();
+  }
+  return keyboard.text("⬅️ Назад", "adm:panel");
+};
 
 /** Панель управления ключами. */
 export const keysKeyboard = (): InlineKeyboard =>
@@ -118,11 +155,16 @@ export const adminsKeyboard = (removableIds: readonly number[]): InlineKeyboard 
   return keyboard.text("⬅️ Назад", "adm:panel");
 };
 
-export const plansKeyboard = (): InlineKeyboard =>
+/**
+ * Кнопки тарифов. Если оплата выключена, вместо покупки — заявка: пока
+ * платёжка не подключена, доступ выдаёт админ вручную.
+ */
+export const plansKeyboard = (paymentsEnabled = true): InlineKeyboard =>
   PLANS.reduce((keyboard, plan) => {
+    const label = `${plan.name} — ${plan.priceRub} ₽`;
     return keyboard.text(
-      `${plan.name} — ${plan.priceRub} ₽`,
-      `buy:${plan.code}`,
+      paymentsEnabled ? label : `📨 ${label}`,
+      paymentsEnabled ? `buy:${plan.code}` : `req:${plan.code}`,
     );
   }, new InlineKeyboard().row()).row();
 
