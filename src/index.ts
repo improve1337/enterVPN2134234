@@ -1,3 +1,4 @@
+import type { Bot } from "grammy";
 import { config } from "./config.js";
 import { allAdminIds } from "./admins.js";
 import { createBot } from "./bot.js";
@@ -64,7 +65,7 @@ async function main(): Promise<void> {
     await app.listen({ port: config.port, host: config.host });
     await deleteWebhook(bot);
     logger.info({ port: config.port }, "HTTP-сервер мониторинга запущен");
-    await bot.start();
+    await startPolling(bot);
   }
 
   const shutdown = async (signal: string): Promise<void> => {
@@ -87,3 +88,39 @@ main().catch((error) => {
   logger.error({ err: errorInfo(error) }, "фатальная ошибка запуска");
   process.exit(1);
 });
+
+/**
+ * Long polling с восстановлением после сбоев.
+ *
+ * При пересоздании контейнера хостингом старый и новый инстанс на пару секунд
+ * опрашивают один токен одновременно — Telegram отвечает `409 Conflict`.
+ * Раньше это валило процесс (`process.exit(1)`), и бот уходил в цикл
+ * перезапусков. Теперь ошибки polling (кроме неверного токена) приводятся
+ * к повтору с нарастающей паузой.
+ */
+async function startPolling(bot: Bot): Promise<void> {
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    try {
+      await bot.start();
+      return;
+    } catch (error) {
+      const info = errorInfo(error);
+      const haystack = `${info.message} ${info.code ?? ""}`;
+      if (/401|unauthorized/i.test(haystack)) {
+        logger.error(
+          { err: info },
+          "polling: Telegram отклонил токен (401) — останавливаюсь",
+        );
+        process.exit(1);
+      }
+      const retryInMs = Math.min(30_000, 2_000 * attempt);
+      logger.warn(
+        { attempt, err: info, retryInMs },
+        "polling прервался, перезапускаю",
+      );
+      await new Promise((resolve) => setTimeout(resolve, retryInMs));
+    }
+  }
+}
