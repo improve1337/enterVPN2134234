@@ -385,6 +385,17 @@ export function setSubscriptionExpiry(
     .run(expiresAt, telegramId);
 }
 
+/**
+ * Получатели рассылки: все, кроме заблокированных нами. Те, кто заблокировал
+ * бота сам, остаются в списке — Telegram вернёт ошибку, её просто посчитаем.
+ */
+export function listBroadcastRecipients(): number[] {
+  const rows = raw
+    .prepare("SELECT telegram_id FROM users WHERE banned = 0 ORDER BY created_at")
+    .all() as unknown as { telegram_id: number }[];
+  return rows.map((row) => Number(row.telegram_id));
+}
+
 export function createOrder(input: {
   id: string;
   telegramId: number;
@@ -500,6 +511,7 @@ export type UserState =
   | "admin_add"
   | "key_lookup"
   | "key_issue_code"
+  | "broadcast_compose"
   | `key_issue_target:${string}`;
 
 export function addAdmin(telegramId: number, addedBy: number | null): void {

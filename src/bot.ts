@@ -18,6 +18,7 @@ import {
   getUser,
   getUserState,
   listAdminIds,
+  listBroadcastRecipients,
   listOrders,
   removeAdmin,
   setAutoRenew,
@@ -46,6 +47,7 @@ import {
   isSimulatedPayment,
 } from "./services/payments.js";
 import { marzbanOverview } from "./services/provision.js";
+import { broadcastMessage } from "./services/broadcast.js";
 import {
   approveRequest,
   pendingRequests,
@@ -71,6 +73,7 @@ import {
   paymentsKeyboard,
   plansKeyboard,
   requestsKeyboard,
+  broadcastPreviewKeyboard,
   supportKeyboard,
   keysKeyboard,
 } from "./ui/keyboards.js";
@@ -82,6 +85,11 @@ import {
   adminPanelText,
   adminRequestsText,
   adminStatsText,
+  broadcastCancelledText,
+  broadcastEmptyText,
+  broadcastPreviewText,
+  broadcastPromptText,
+  broadcastResultText,
   helpText,
   keyCardText,
   keyCreatedText,
@@ -302,6 +310,12 @@ export function createBot(): Bot {
    * показ экрана заливал бы картинку заново.
    */
   const photoFileIds = new Map<string, string>();
+
+  /** Черновики рассылки: админ → пост, который он собирается отправить. */
+  const broadcastDrafts = new Map<
+    number,
+    { text: string; photoFileId?: string }
+  >();
 
   const sendPhotoScreen = async (
     ctx: Context,
@@ -694,6 +708,55 @@ export function createBot(): Bot {
       text: next ? "Оплата включена" : "Оплата выключена",
     });
     await replyMarkdown(ctx, paymentsPanelText(next), paymentsKeyboard(next));
+  });
+
+  // --- Рассылка ---
+  bot.callbackQuery("adm:broadcast", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    setUserState(fromId(ctx), "broadcast_compose");
+    await ctx.answerCallbackQuery();
+    await replyMarkdown(ctx, broadcastPromptText());
+  });
+
+  bot.callbackQuery("bc:cancel", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    broadcastDrafts.delete(fromId(ctx));
+    await ctx.answerCallbackQuery({ text: "Отменено" });
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    await replyMarkdown(
+      ctx,
+      broadcastCancelledText(),
+      adminKeyboard(pendingRequestsCount()),
+    );
+  });
+
+  bot.callbackQuery("bc:send", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const actor = fromId(ctx);
+    const draft = broadcastDrafts.get(actor);
+    if (!draft) {
+      await ctx.answerCallbackQuery({
+        text: "Черновик не найден — начните заново",
+        show_alert: true,
+      });
+      return;
+    }
+    broadcastDrafts.delete(actor);
+    await ctx.answerCallbackQuery({ text: "Отправляю…" });
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+
+    const recipients = listBroadcastRecipients().length;
+    const started = await ctx.reply(`📣 Отправляю ${recipients} получателям…`);
+    const result = await broadcastMessage(ctx.api, draft);
+    audit(actor, "broadcast", `sent=${result.sent}/${result.total}`);
+    const chatId = ctx.chat?.id;
+    if (chatId !== undefined) {
+      await ctx.api
+        .editMessageText(chatId, started.message_id, broadcastResultText(result), {
+          parse_mode: "Markdown",
+        })
+        .catch(() => undefined);
+    }
   });
 
   // --- Ключи доступа ---
@@ -1116,6 +1179,49 @@ export function createBot(): Bot {
         ? { telegramId: Number(raw) }
         : { username: raw };
       await performKeyIssue(ctx, code, target);
+      return;
+    }
+
+    if (state === "broadcast_compose") {
+      clearUserState(from.id);
+      if (!isAdmin(from.id)) return;
+      const text = (message.text ?? message.caption ?? "").trim();
+      const sizes = message.photo;
+      const photoFileId = sizes?.[sizes.length - 1]?.file_id;
+      if (!text && !photoFileId) {
+        await replyMarkdown(
+          ctx,
+          "Нужен текст или картинка с подписью. Начните заново: «🛠 Админка» → «📣 Рассылка».",
+        );
+        return;
+      }
+      const recipients = listBroadcastRecipients();
+      if (recipients.length === 0) {
+        await replyMarkdown(
+          ctx,
+          broadcastEmptyText(),
+          adminKeyboard(pendingRequestsCount()),
+        );
+        return;
+      }
+      broadcastDrafts.set(from.id, {
+        text,
+        ...(photoFileId ? { photoFileId } : {}),
+      });
+      await replyMarkdown(
+        ctx,
+        broadcastPreviewText(recipients.length),
+        broadcastPreviewKeyboard(recipients.length),
+      );
+      if (photoFileId) {
+        await ctx
+          .replyWithPhoto(photoFileId, {
+            ...(text ? { caption: text, parse_mode: "Markdown" as const } : {}),
+          })
+          .catch(() => undefined);
+      } else {
+        await replyMarkdown(ctx, text);
+      }
       return;
     }
 

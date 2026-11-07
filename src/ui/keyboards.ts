@@ -55,7 +55,16 @@ export const adminKeyboard = (pendingRequests = 0): InlineKeyboard =>
       "adm:requests",
     )
     .row()
-    .text("💳 Оплата", "adm:payments");
+    .text("💳 Оплата", "adm:payments")
+    .row()
+    .text("📣 Рассылка", "adm:broadcast");
+
+/** Предпросмотр рассылки: отправить всем или отменить. */
+export const broadcastPreviewKeyboard = (recipients: number): InlineKeyboard =>
+  new InlineKeyboard()
+    .text(`✅ Отправить всем (${recipients})`, "bc:send")
+    .row()
+    .text("❌ Отмена", "bc:cancel");
 
 /** Панель оплаты: переключатель «включить/выключить». */
 export const paymentsKeyboard = (enabled: boolean): InlineKeyboard =>

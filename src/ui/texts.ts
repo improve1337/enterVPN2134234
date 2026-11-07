@@ -323,6 +323,49 @@ export const adminNewRequestText = (request: RequestRecord): string => {
   ].join("\n");
 };
 
+// --- Рассылка ---
+
+export const broadcastPromptText = (): string =>
+  [
+    "📣 *Рассылка*",
+    "",
+    "Отправьте текст поста — его получат все пользователи бота.",
+    "",
+    "Можно приложить картинку: тогда текст станет подписью к ней.",
+    "",
+    "Отмена — любая кнопка меню.",
+  ].join("\n");
+
+export const broadcastPreviewText = (recipients: number): string =>
+  [
+    "📣 *Предпросмотр*",
+    "",
+    `Получателей: *${recipients}*`,
+    "",
+    "Ниже — как увидят пользователи. Отправляем?",
+  ].join("\n");
+
+export const broadcastEmptyText = (): string =>
+  ["📣 *Рассылка*", "", "Пока нет получателей — отправлять некому."].join("\n");
+
+export const broadcastResultText = (result: {
+  total: number;
+  sent: number;
+  failed: number;
+}): string =>
+  [
+    "📣 *Рассылка завершена*",
+    "",
+    `Всего получателей: *${result.total}*`,
+    `Доставлено: *${result.sent}*`,
+    ...(result.failed > 0
+      ? [`Не доставлено: *${result.failed}* (заблокировали бота или ошибка)`]
+      : []),
+  ].join("\n");
+
+export const broadcastCancelledText = (): string =>
+  "📣 Рассылка отменена.";
+
 export const adminPanelText = (): string =>
   [
     "🛠 *Админка*",
