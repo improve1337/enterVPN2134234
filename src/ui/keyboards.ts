@@ -164,7 +164,7 @@ export const plansKeyboard = (paymentsEnabled = true): InlineKeyboard =>
     const label = `${plan.name} — ${plan.priceRub} ₽`;
     return keyboard.text(
       paymentsEnabled ? label : `📨 ${label}`,
-      paymentsEnabled ? `buy:${plan.code}` : `req:${plan.code}`,
+      paymentsEnabled ? `buy:${plan.code}` : `req:plan:${plan.code}`,
     );
   }, new InlineKeyboard().row()).row();
 

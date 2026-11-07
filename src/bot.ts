@@ -548,7 +548,9 @@ export function createBot(): Bot {
   });
 
   // --- Заявки на подписку (когда оплата выключена) ---
-  bot.callbackQuery(/^req:(.+)$/, async (ctx) => {
+  // Префикс `req:plan:` намеренно отличается от `req:ok:` / `req:no:` —
+  // иначе этот обработчик перехватывал бы кнопки выдачи и отклонения.
+  bot.callbackQuery(/^req:plan:(.+)$/, async (ctx) => {
     const planCode = ctx.match[1] ?? "";
     const plan = getPlan(planCode);
     if (!plan) {

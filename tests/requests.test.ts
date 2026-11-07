@@ -18,6 +18,7 @@ import {
   isPaymentsEnabled,
   setPaymentsEnabled,
 } from "../src/services/settings.js";
+import { plansKeyboard } from "../src/ui/keyboards.js";
 
 const USER = 400900;
 
@@ -27,6 +28,29 @@ beforeEach(() => {
     "DELETE FROM orders; DELETE FROM users; DELETE FROM audit_log; DELETE FROM keys; DELETE FROM user_states; DELETE FROM requests; DELETE FROM settings;",
   );
   upsertUser({ telegramId: USER, username: "requester", firstName: "Тест" });
+});
+
+describe("кнопки тарифов", () => {
+  const callbackData = (paymentsEnabled: boolean): string[] =>
+    plansKeyboard(paymentsEnabled)
+      .inline_keyboard.flat()
+      .map((button) => button.callback_data ?? "");
+
+  it("заявка не конфликтует с одобрением и отклонением", () => {
+    const data = callbackData(false);
+    expect(data.length).toBeGreaterThan(0);
+    for (const value of data) {
+      expect(value.startsWith("req:plan:")).toBe(true);
+      expect(value.startsWith("req:ok:")).toBe(false);
+      expect(value.startsWith("req:no:")).toBe(false);
+    }
+  });
+
+  it("при включённой оплате кнопки ведут на покупку", () => {
+    const data = callbackData(true);
+    expect(data.length).toBeGreaterThan(0);
+    for (const value of data) expect(value.startsWith("buy:")).toBe(true);
+  });
 });
 
 describe("оплата: переключатель", () => {
