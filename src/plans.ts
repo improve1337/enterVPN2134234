@@ -6,9 +6,9 @@ export const PLANS: readonly Plan[] = [
     name: "VPN · 1 месяц",
     priceRub: 130,
     days: 30,
-    trafficGb: null,
+    trafficGb: 100,
     deviceLimit: 5,
-    description: "Безлимитный трафик, до 5 устройств",
+    description: "100 ГБ трафика, до 5 устройств",
     active: true,
   },
   {
@@ -16,9 +16,9 @@ export const PLANS: readonly Plan[] = [
     name: "VPN · 3 месяца",
     priceRub: 350,
     days: 90,
-    trafficGb: null,
+    trafficGb: 400,
     deviceLimit: 5,
-    description: "Безлимитный трафик, до 5 устройств",
+    description: "400 ГБ трафика, до 5 устройств",
     active: true,
   },
 ] as const;

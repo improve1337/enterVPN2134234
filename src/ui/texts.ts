@@ -466,9 +466,10 @@ export const keyHelpText = (): string =>
  * который в Markdown ломает разметку.
  */
 export const offerText = (): string => {
-  const plans = PLANS.map((plan) => `• ${plan.name} — ${plan.priceRub} ₽`).join(
-    "\n",
-  );
+  const plans = PLANS.map(
+    (plan) =>
+      `• ${plan.name} — ${plan.priceRub} ₽ (${trafficLabel(plan.trafficGb)})`,
+  ).join("\n");
   const support = config.supportUrl.replace("https://t.me/", "@");
   return [
     `<b>📄 Оферта и правила ${brand}</b>`,
@@ -477,7 +478,7 @@ export const offerText = (): string => {
     "",
     "<b>💎 Тарифы</b>",
     plans,
-    `Безлимитный трафик, до ${TRIAL.deviceLimit} устройств. Пробный доступ — ${TRIAL.days} дня бесплатно, один раз на аккаунт.`,
+    `До ${TRIAL.deviceLimit} устройств. Пробный доступ — ${TRIAL.days} дня бесплатно (безлимит), один раз на аккаунт.`,
     "",
     "<b>🛒 Оплата</b>",
     "Оплата — на защищённой странице платёжного партнёра (СБП, карты, криптовалюта). Данные карты не хранятся.",

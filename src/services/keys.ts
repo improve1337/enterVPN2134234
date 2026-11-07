@@ -166,15 +166,17 @@ async function activateBoundKey(input: {
   actor: number | null;
 }): Promise<{ key: KeyRecord; subscription: Subscription }> {
   const { key, telegramId } = input;
-  const marzbanUsername = `tg_${telegramId}`;
   const user = getUser(telegramId);
   const result = await provisionSubscription({
-    marzbanUsername,
+    telegramId,
+    username: user?.username ?? input.username,
+    previousMarzbanUsername: user?.marzbanUsername ?? null,
     planCode: key.planCode,
     days: key.days,
     trafficLimitGb: key.trafficLimitGb,
     extendFrom: user?.subscriptionExpiresAt ?? null,
   });
+  const marzbanUsername = result.username;
   // Ключ мог быть выдан повторно после отзыва — возвращаем доступ.
   await setSubscriptionStatus(marzbanUsername, "active");
   saveSubscription({

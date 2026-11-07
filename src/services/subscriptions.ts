@@ -23,7 +23,9 @@ export async function startTrial(telegramId: number): Promise<TrialOutcome> {
   if (user.trialUsed) return { granted: false, reason: "already_used" };
 
   const result = await provisionSubscription({
-    marzbanUsername: `tg_${telegramId}`,
+    telegramId,
+    username: user.username,
+    previousMarzbanUsername: user.marzbanUsername,
     planCode: "trial",
     days: TRIAL.days,
     trafficLimitGb: TRIAL.trafficGb,
@@ -67,7 +69,9 @@ export async function activatePlan(
   const user = getUser(telegramId);
   const currentExpiry = user?.subscriptionExpiresAt ?? null;
   const result = await provisionSubscription({
-    marzbanUsername: `tg_${telegramId}`,
+    telegramId,
+    username: user?.username ?? null,
+    previousMarzbanUsername: user?.marzbanUsername ?? null,
     planCode,
     days: plan.days,
     trafficLimitGb: plan.trafficGb,

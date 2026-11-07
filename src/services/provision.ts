@@ -4,8 +4,11 @@ import type { ProvisionResult } from "../types.js";
 import { addDays } from "../db.js";
 
 export interface ProvisionRequest {
-  /** Имя пользователя в Marzban: `tg_<telegramId>` для подписок из бота. */
-  marzbanUsername: string;
+  telegramId: number;
+  /** `@username` из Telegram — из него формируется имя пользователя в Marzban. */
+  username?: string | null;
+  /** Имя, уже закреплённое за пользователем в базе бота (если было). */
+  previousMarzbanUsername?: string | null;
   planCode: string;
   days: number;
   /** `null` — безлимитный трафик. */
@@ -13,6 +16,27 @@ export interface ProvisionRequest {
   /** Продление: не сбрасывать уже использованный трафик. */
   extendFrom?: string | null;
 }
+
+/** Допустимое имя пользователя в Marzban. */
+const MARZBAN_NAME_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
+
+/**
+ * Имя пользователя в Marzban: `@username` из Telegram, а если его нет
+ * (или он не подходит по формату) — `tg_<telegramId>`.
+ */
+export function marzbanUsernameFor(input: {
+  telegramId: number;
+  username?: string | null;
+}): string {
+  const handle = (input.username ?? "").trim().replace(/^@/, "").toLowerCase();
+  return MARZBAN_NAME_PATTERN.test(handle) ? handle : `tg_${input.telegramId}`;
+}
+
+/**
+ * Метка владельца в поле `note` пользователя Marzban. По ней бот отличает
+ * своих пользователей от чужих с тем же именем.
+ */
+const ownerNote = (telegramId: number): string => `tg:${telegramId}`;
 
 /**
  * Выдача доступа. В mock-режиме ничего не ходит в сеть и возвращает
@@ -25,10 +49,6 @@ export async function provisionSubscription(
     return mockProvision(request);
   }
   return marzbanProvision(request);
-}
-
-export async function revokeSubscription(telegramId: number): Promise<void> {
-  await deleteSubscription(`tg_${telegramId}`);
 }
 
 /** Полное удаление пользователя в Marzban (например, при отзыве доступа). */
@@ -59,7 +79,7 @@ export async function setSubscriptionStatus(
 }
 
 function mockProvision(request: ProvisionRequest): ProvisionResult {
-  const username = request.marzbanUsername;
+  const username = marzbanUsernameFor(request);
   const token = randomBytes(9).toString("hex");
   const base = config.mockLandingUrl.replace(/\/+$/, "");
   const start = request.extendFrom ? new Date(request.extendFrom) : new Date();
@@ -84,6 +104,7 @@ interface MarzbanUserResponse {
   username: string;
   subscription_url: string;
   expire: number | null;
+  note?: string | null;
 }
 
 async function marzbanLogin(): Promise<string> {
@@ -146,12 +167,18 @@ async function marzbanRequest(
 async function marzbanProvision(
   request: ProvisionRequest,
 ): Promise<ProvisionResult> {
-  const username = request.marzbanUsername;
+  const note = ownerNote(request.telegramId);
+  const { username, existing } = await resolveMarzbanUsername(
+    request,
+    note,
+    `tg_${request.telegramId}`,
+  );
   const expire = Math.floor(
     new Date(addDays(new Date(), request.days)).getTime() / 1000,
   );
   const payload = {
     username,
+    note,
     proxies: { vless: {} },
     // VLESS Reality — рабочий профиль; VLESS XHTTP CDN — обход белых списков (RU LTE).
     inbounds: { vless: ["VLESS Reality", "VLESS XHTTP CDN"] },
@@ -165,16 +192,20 @@ async function marzbanProvision(
     status: "active" as const,
   };
 
-  const existing = await marzbanRequest(
-    "GET",
-    `/api/user/${encodeURIComponent(username)}`,
-  ).catch(() => undefined);
-
   const result = (
     existing
       ? await marzbanRequest("PUT", `/api/user/${encodeURIComponent(username)}`, payload)
       : await marzbanRequest("POST", "/api/user", payload)
   ) as MarzbanUserResponse;
+
+  // Продление: у пользователя остался израсходованный трафик прошлого периода —
+  // обнуляем, чтобы новый лимит считался с нуля.
+  if (existing) {
+    await marzbanRequest(
+      "POST",
+      `/api/user/${encodeURIComponent(username)}/reset`,
+    ).catch(() => undefined);
+  }
 
   return {
     username: result.username,
@@ -182,4 +213,39 @@ async function marzbanProvision(
     expiresAt: new Date((result.expire ?? expire) * 1000).toISOString(),
     trafficLimitGb: request.trafficLimitGb,
   };
+}
+
+/**
+ * Выбирает имя пользователя в Marzban, не затирая чужих:
+ *
+ * 1. имя, ранее закреплённое за этим пользователем (стабильность при смене `@username`);
+ * 2. имя из текущего `@username`;
+ * 3. `tg_<telegramId>` — если предыдущие варианты заняты чужими пользователями.
+ *
+ * «Свой» пользователь определяется по метке `note` = `tg:<telegramId>`.
+ */
+async function resolveMarzbanUsername(
+  request: ProvisionRequest,
+  note: string,
+  fallback: string,
+): Promise<{ username: string; existing?: MarzbanUserResponse }> {
+  const candidates = [
+    request.previousMarzbanUsername,
+    marzbanUsernameFor(request),
+    fallback,
+  ]
+    .map((value) => (value ?? "").trim())
+    .filter((value, index, all) => value.length > 0 && all.indexOf(value) === index);
+
+  let last: { username: string; existing?: MarzbanUserResponse } | undefined;
+  for (const candidate of candidates) {
+    const existing = (await marzbanRequest(
+      "GET",
+      `/api/user/${encodeURIComponent(candidate)}`,
+    ).catch(() => undefined)) as MarzbanUserResponse | undefined;
+    if (!existing) return { username: candidate };
+    if (existing.note === note) return { username: candidate, existing };
+    last = { username: candidate, existing };
+  }
+  return last ?? { username: fallback };
 }

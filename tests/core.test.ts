@@ -15,6 +15,7 @@ import {
 import { PLANS, TRIAL, getPlan } from "../src/plans.js";
 import { confirmPayment } from "../src/services/payments.js";
 import { fulfillPaidOrder } from "../src/services/fulfillment.js";
+import { marzbanUsernameFor } from "../src/services/provision.js";
 import { activatePlan, startTrial } from "../src/services/subscriptions.js";
 
 const USER = 100500;
@@ -46,7 +47,7 @@ describe("пробный период", () => {
   it("выдаётся один раз на аккаунт", async () => {
     const first = await startTrial(USER);
     expect(first.granted).toBe(true);
-    expect(first.subscription?.subscriptionUrl).toContain("tg_100500");
+    expect(first.subscription?.subscriptionUrl).toContain("tester");
     expect(getUser(USER)?.trialUsed).toBe(1);
 
     const second = await startTrial(USER);
@@ -64,14 +65,12 @@ describe("пробный период", () => {
 });
 
 describe("тарифы и продление", () => {
-  it("один тариф с двумя сроками: 130 ₽ и 350 ₽, безлимитный трафик", () => {
+  it("тарифы: 130 ₽/100 ГБ за месяц и 350 ₽/400 ГБ за три месяца", () => {
     expect(PLANS.length).toBe(2);
     expect(PLANS.map((plan) => plan.priceRub)).toEqual([130, 350]);
     expect(PLANS.map((plan) => plan.days)).toEqual([30, 90]);
-    for (const plan of PLANS) {
-      expect(plan.trafficGb).toBeNull();
-      expect(plan.deviceLimit).toBe(5);
-    }
+    expect(PLANS.map((plan) => plan.trafficGb)).toEqual([100, 400]);
+    for (const plan of PLANS) expect(plan.deviceLimit).toBe(5);
     expect(TRIAL.trafficGb).toBeNull();
     expect(TRIAL.deviceLimit).toBe(5);
   });
@@ -87,7 +86,7 @@ describe("тарифы и продление", () => {
       new Date(first.expiresAt).getTime(),
     );
     expect(getUser(USER)?.planCode).toBe("vpn_1m");
-    expect(getUser(USER)?.trafficLimitGb).toBeNull();
+    expect(getUser(USER)?.trafficLimitGb).toBe(100);
   });
 
   it("неизвестный тариф бросает ошибку", async () => {
@@ -170,6 +169,16 @@ describe("работа с датами", () => {
   it("addDays считает срок в UTC", () => {
     const start = new Date("2026-01-01T00:00:00.000Z");
     expect(addDays(start, 30)).toBe("2026-01-31T00:00:00.000Z");
+  });
+});
+
+describe("имя пользователя в Marzban", () => {
+  it("берётся из @username, иначе tg_<id>", () => {
+    expect(marzbanUsernameFor({ telegramId: 5, username: "@Vasya" })).toBe("vasya");
+    expect(marzbanUsernameFor({ telegramId: 5, username: "vasya" })).toBe("vasya");
+    expect(marzbanUsernameFor({ telegramId: 5, username: null })).toBe("tg_5");
+    expect(marzbanUsernameFor({ telegramId: 5, username: "  " })).toBe("tg_5");
+    expect(marzbanUsernameFor({ telegramId: 5, username: "bad name!" })).toBe("tg_5");
   });
 });
 

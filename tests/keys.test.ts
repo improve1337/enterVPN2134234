@@ -91,8 +91,8 @@ describe("выдача ключа", () => {
     if (!result.ok) return;
     expect(result.pending).toBe(false);
     expect(result.key.status).toBe("active");
-    expect(result.key.marzbanUsername).toBe(`tg_${USER}`);
-    expect(result.key.subscriptionUrl).toContain(`tg_${USER}`);
+    expect(result.key.marzbanUsername).toBe("buyer");
+    expect(result.key.subscriptionUrl).toContain("buyer");
     expect(result.subscription?.expiresAt).toBe(result.key.expiresAt);
 
     const user = getUser(USER);
@@ -170,7 +170,7 @@ describe("привязка по @username", () => {
     expect(bound).toHaveLength(1);
     expect(bound[0]?.status).toBe("active");
     expect(bound[0]?.targetTelegramId).toBe(newUser);
-    expect(getUser(newUser)?.subscriptionUrl).toContain(`tg_${newUser}`);
+    expect(getUser(newUser)?.subscriptionUrl).toContain("future_user");
     expect(findUserByUsername("future_user")?.telegramId).toBe(newUser);
   });
 });
