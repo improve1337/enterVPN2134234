@@ -7,7 +7,7 @@ import type { Bot } from "grammy";
 import { config } from "./config.js";
 import { errorInfo, logger } from "./logger.js";
 import { fulfillPaidOrder } from "./services/fulfillment.js";
-import { confirmPayment } from "./services/payments.js";
+import { confirmPayment, isSimulatedPayment } from "./services/payments.js";
 import { getOrder, getUser, listOrders, stats } from "./db.js";
 
 export function createServer(bot: Bot) {
@@ -54,7 +54,9 @@ export function createServer(bot: Bot) {
 
   // Mock-подтверждение оплаты: эмулирует callback платёжки локально.
   app.post("/mock/pay/:orderId", async (request, reply) => {
-    if (!config.mockMode) return reply.code(404).send({ error: "not found" });
+    if (!isSimulatedPayment()) {
+      return reply.code(404).send({ error: "not found" });
+    }
     const params = request.params as { orderId: string };
     const result = confirmPayment({ orderId: params.orderId });
     if (!result.ok) {

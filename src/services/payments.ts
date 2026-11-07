@@ -15,21 +15,29 @@ export interface CreatePaymentResult {
 }
 
 /**
+ * Платёж эмулируется, если включён `MOCK_MODE` (полностью демо) или
+ * `DEMO_PAYMENTS` (платёж демо, но подписка выдаётся настоящая — из Marzban).
+ */
+export const isSimulatedPayment = (): boolean =>
+  config.mockMode || config.demoPayments;
+
+/**
  * Создаёт заказ в БД и платёж у провайдера. Сначала заказ, потом платёж —
  * чтобы потерянный callback можно было найти по order id.
  */
 export async function createPayment(
   input: CreatePaymentInput,
 ): Promise<CreatePaymentResult> {
+  const simulated = isSimulatedPayment();
   const order = createOrder({
     id: randomUUID(),
     telegramId: input.telegramId,
     planCode: input.planCode,
     amountRub: input.amountRub,
-    provider: config.mockMode ? "mock" : "platega",
+    provider: config.mockMode ? "mock" : simulated ? "demo" : "platega",
   });
 
-  if (config.mockMode) {
+  if (simulated) {
     const providerTxId = `mock_${order.id.slice(0, 8)}`;
     const payUrl = `https://example.com/mock-pay?order=${order.id}`;
     setOrderPayment(order.id, providerTxId, payUrl);

@@ -40,7 +40,11 @@ import {
   type IssueResult,
   type IssueTarget,
 } from "./services/keys.js";
-import { confirmPayment, createPayment } from "./services/payments.js";
+import {
+  confirmPayment,
+  createPayment,
+  isSimulatedPayment,
+} from "./services/payments.js";
 import { activatePlan, startTrial } from "./services/subscriptions.js";
 import { buildClientOptions, syncChatCommands } from "./telegram.js";
 import {
@@ -608,7 +612,7 @@ export function createBot(): Bot {
 
   // Демонстрационная оплата: доступна только в MOCK_MODE.
   bot.callbackQuery(/^mockpay:(.+)$/, async (ctx) => {
-    if (!config.mockMode) {
+    if (!isSimulatedPayment()) {
       await ctx.answerCallbackQuery({ text: "Недоступно", show_alert: true });
       return;
     }
@@ -929,7 +933,7 @@ export function createBot(): Bot {
     });
     audit(id, "order_created", order.id);
 
-    const keyboard = config.mockMode
+    const keyboard = isSimulatedPayment()
       ? new InlineKeyboard()
           .text("💳 Оплатить (демо)", `mockpay:${order.id}`)
           .row()

@@ -42,6 +42,8 @@ const schema = z.object({
   TELEGRAM_PROXY: z.string().optional(),
   SUPPORT_URL: z.string().default("https://t.me/EnterseviceSupport_bot"),
   MOCK_MODE: boolFromString(true),
+  // Демо-оплата: платёж эмулируется, но подписка выдаётся настоящая (Marzban).
+  DEMO_PAYMENTS: boolFromString(false),
   MOCK_LANDING_URL: z.string().default("https://example.com"),
   KEY_CODE_PREFIX: z.string().default("ENT"),
   KEYS_PAGE_SIZE: z.coerce.number().int().min(1).max(20).default(5),
@@ -79,6 +81,7 @@ export const config = {
   databasePath: env.DATABASE_PATH,
   bannerPath: env.BANNER_PATH,
   mockMode: env.MOCK_MODE,
+  demoPayments: env.DEMO_PAYMENTS,
   publicUrl: env.PUBLIC_URL,
   webhookPath: env.WEBHOOK_PATH,
   webhookSecret: env.WEBHOOK_SECRET,
