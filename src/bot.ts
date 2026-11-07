@@ -269,6 +269,56 @@ export function createBot(): Bot {
     }
   };
 
+  /**
+   * Экран с картинкой. Telegram не переиспользует загруженный файл по пути,
+   * поэтому запоминаем `file_id` первого фото и дальше шлём его — иначе каждый
+   * показ экрана заливал бы картинку заново.
+   */
+  const photoFileIds = new Map<string, string>();
+
+  const sendPhotoScreen = async (
+    ctx: Context,
+    imagePath: string,
+    caption: string,
+    keyboard?: InlineKeyboard,
+  ): Promise<void> => {
+    const options = {
+      caption,
+      parse_mode: "Markdown" as const,
+      ...(keyboard ? { reply_markup: keyboard } : {}),
+    };
+    const cached = photoFileIds.get(imagePath);
+    if (cached) {
+      try {
+        await ctx.replyWithPhoto(cached, options);
+        return;
+      } catch (error) {
+        photoFileIds.delete(imagePath);
+        logger.warn(
+          { err: errorInfo(error), path: imagePath },
+          "не удалось отправить фото по file_id",
+        );
+      }
+    }
+    if (existsSync(imagePath)) {
+      try {
+        const sent = await ctx.replyWithPhoto(new InputFile(imagePath), options);
+        const sizes = sent.photo;
+        const fileId = sizes?.[sizes.length - 1]?.file_id;
+        if (fileId) photoFileIds.set(imagePath, fileId);
+        return;
+      } catch (error) {
+        logger.warn(
+          { err: errorInfo(error), path: imagePath },
+          "не удалось отправить картинку, отправляю текст",
+        );
+      }
+    } else {
+      logger.warn({ path: imagePath }, "файл картинки не найден");
+    }
+    await replyMarkdown(ctx, caption, keyboard);
+  };
+
   /** Приветствие с баннером; если файла нет — обычный текст. */
   const sendWelcome = async (ctx: Context, name: string | null): Promise<void> => {
     const caption = welcomeText(name);
@@ -359,7 +409,12 @@ export function createBot(): Bot {
 
   bot.hears("💎 Тарифы", async (ctx) => {
     track(ctx);
-    await replyMarkdown(ctx, planListText(), plansKeyboard());
+    await sendPhotoScreen(
+      ctx,
+      config.plansImagePath,
+      planListText(),
+      plansKeyboard(),
+    );
   });
 
   bot.hears("📦 Моя подписка", async (ctx) => {
@@ -371,8 +426,9 @@ export function createBot(): Bot {
 
   bot.hears("💬 Поддержка", async (ctx) => {
     track(ctx);
-    await replyMarkdown(
+    await sendPhotoScreen(
       ctx,
+      config.supportImagePath,
       supportLinkText(),
       supportKeyboard(config.supportUrl),
     );
@@ -572,7 +628,12 @@ export function createBot(): Bot {
 
   bot.callbackQuery("sub:renew", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await replyMarkdown(ctx, planListText(), plansKeyboard());
+    await sendPhotoScreen(
+      ctx,
+      config.plansImagePath,
+      planListText(),
+      plansKeyboard(),
+    );
   });
 
   bot.callbackQuery("sub:autorenew", async (ctx) => {

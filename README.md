@@ -169,7 +169,7 @@ src/
     keys.ts          ключи доступа: создание, выдача, привязка, отзыв
   ui/             тексты и клавиатуры
 scripts/stop.mjs  остановка бота
-assets/welcome.png картинка приветствия (/start)
+assets/            картинки экранов: welcome.png (/start), plans.png (тарифы), support.png (поддержка)
 docs/keys.md      описание подсистемы ключей
 tests/            тесты ядра
 ```
