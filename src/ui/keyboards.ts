@@ -204,6 +204,10 @@ export const backKeyboard = (): InlineKeyboard =>
 export const supportKeyboard = (supportUrl: string): InlineKeyboard =>
   new InlineKeyboard().url("💬 Открыть поддержку", supportUrl);
 
+/** Кнопка к политике конфиденциальности на экране оферты. */
+export const offerKeyboard = (): InlineKeyboard =>
+  new InlineKeyboard().text("🔒 Политика конфиденциальности", "offer:privacy");
+
 /** Кнопка «поделиться» реферальной ссылкой через диалог Telegram. */
 export const referralKeyboard = (link: string): InlineKeyboard => {
   const text = encodeURIComponent(

@@ -76,6 +76,7 @@ import {
   keyPlansKeyboard,
   keyRevokeConfirmKeyboard,
   mainKeyboard,
+  offerKeyboard,
   payKeyboard,
   paymentsKeyboard,
   plansKeyboard,
@@ -120,6 +121,7 @@ import {
   paymentSuccessText,
   paymentsPanelText,
   planListText,
+  privacyText,
   referralJoinedText,
   referralRewardText,
   referralText,
@@ -306,6 +308,33 @@ export function createBot(): Bot {
     });
 
   /**
+   * Telegram режет сообщения длиннее 4096 символов. Правовые документы длинные,
+   * поэтому бьём их по абзацам; клавиатуру вешаем на последнее сообщение.
+   */
+  const sendLongHtml = async (
+    ctx: Context,
+    text: string,
+    keyboard?: InlineKeyboard,
+  ): Promise<void> => {
+    const limit = 3900;
+    const parts: string[] = [];
+    let current = "";
+    for (const block of text.split("\n\n")) {
+      if (current.length > 0 && current.length + block.length + 2 > limit) {
+        parts.push(current);
+        current = block;
+      } else {
+        current = current.length > 0 ? `${current}\n\n${block}` : block;
+      }
+    }
+    if (current.length > 0) parts.push(current);
+    for (const [index, part] of parts.entries()) {
+      const isLast = index === parts.length - 1;
+      await replyHtml(ctx, part, isLast ? keyboard : undefined);
+    }
+  };
+
+  /**
    * Отправляет экран с главной клавиатурой. Такое сообщение нельзя удалять:
    * вместе с ним Telegram убирает и reply-клавиатуру. Поэтому старый экран
    * меню удаляем сами, а новый помечаем якорем и исключаем из общей чистки.
@@ -466,7 +495,9 @@ export function createBot(): Bot {
 
   bot.command("help", (ctx) => replyMarkdown(ctx, helpText()));
 
-  bot.command("offer", (ctx) => replyHtml(ctx, offerText()));
+  bot.command("offer", (ctx) => sendLongHtml(ctx, offerText(), offerKeyboard()));
+
+  bot.command("privacy", (ctx) => sendLongHtml(ctx, privacyText()));
 
   bot.command("menu", async (ctx) => {
     track(ctx);
@@ -531,7 +562,14 @@ export function createBot(): Bot {
     );
   });
 
-  bot.hears(OFFER_MENU_LABEL, (ctx) => replyHtml(ctx, offerText()));
+  bot.hears(OFFER_MENU_LABEL, (ctx) =>
+    sendLongHtml(ctx, offerText(), offerKeyboard()),
+  );
+
+  bot.callbackQuery("offer:privacy", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await sendLongHtml(ctx, privacyText());
+  });
 
   bot.hears(ADMIN_MENU_LABEL, async (ctx) => {
     track(ctx);
