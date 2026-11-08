@@ -680,4 +680,70 @@ export const offerText = (): string => {
   ].join("\n");
 };
 
+// --- Реферальная программа ---
+
+export const referralText = (data: {
+  link: string | null;
+  invited: number;
+  converted: number;
+  pending: number;
+  earnedDays: number;
+  pendingDays: number;
+  bonusDays: number;
+  inviteeDays: number;
+}): string => {
+  const blocks: string[] = [
+    "👥 *Пригласить друзей*",
+    "",
+    `За каждого друга, который оформит подписку, вы получаете *+${data.bonusDays}* дн. к своему доступу.`,
+  ];
+  if (data.inviteeDays > 0) {
+    blocks.push(
+      `Друг получает *+${data.inviteeDays}* дн. к пробному периоду.`,
+    );
+  }
+  blocks.push(
+    "",
+    "📊 *Статистика*",
+    `• Приглашено: *${data.invited}*`,
+    `• Оформили подписку: *${data.converted}*`,
+    `• Начислено дней: *${data.earnedDays}*`,
+  );
+  if (data.pendingDays > 0) {
+    blocks.push(
+      `• В запасе: *${data.pendingDays}* дн. — добавим при следующей оплате.`,
+    );
+  }
+  blocks.push("");
+  if (data.link) {
+    blocks.push(
+      "🔗 *Ваша ссылка:*",
+      `\`${data.link}\``,
+      "",
+      "Отправьте её другу — бонус зачтётся автоматически.",
+    );
+  } else {
+    blocks.push("Ссылка недоступна: не задан `BOT_USERNAME` в настройках.");
+  }
+  return blocks.join("\n");
+};
+
+export const referralJoinedText = (days: number): string =>
+  days > 0
+    ? `🎁 Вы пришли по приглашению — пробный доступ продлён на *${days}* дн.`
+    : "🎁 Вы пришли по приглашению друга.";
+
+export const referralRewardText = (info: {
+  days: number;
+  appliedImmediately: boolean;
+}): string =>
+  [
+    "🎉 *Награда за друга!*",
+    "",
+    `Ваш друг оформил подписку — вам начислено *+${info.days}* дн.`,
+    info.appliedImmediately
+      ? "Дни уже добавлены к вашей подписке."
+      : "Дни добавятся к подписке при следующей оплате.",
+  ].join("\n");
+
 export { fmtDate, daysLeft };

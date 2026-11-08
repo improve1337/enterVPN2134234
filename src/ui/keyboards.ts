@@ -10,10 +10,13 @@ import type {
 /** Подписи кнопок главного меню: используются и в клавиатуре, и в чистке чата. */
 export const OFFER_MENU_LABEL = "📄 Оферта и правила";
 
+export const REFERRAL_MENU_LABEL = "👥 Пригласить друзей";
+
 export const MAIN_MENU_LABELS = [
   "🎁 Пробный доступ",
   "💎 Тарифы",
   "📦 Моя подписка",
+  REFERRAL_MENU_LABEL,
   "❓ Помощь",
   "💬 Поддержка",
   OFFER_MENU_LABEL,
@@ -35,7 +38,9 @@ export const mainKeyboard = (isAdmin: boolean): Keyboard => {
     .text(MAIN_MENU_LABELS[3])
     .row()
     .text(MAIN_MENU_LABELS[4])
-    .text(MAIN_MENU_LABELS[5]);
+    .text(MAIN_MENU_LABELS[5])
+    .row()
+    .text(MAIN_MENU_LABELS[6]);
   if (isAdmin) keyboard.row().text(ADMIN_MENU_LABEL);
   return keyboard.resized().persistent();
 };
@@ -198,3 +203,12 @@ export const backKeyboard = (): InlineKeyboard =>
 /** Кнопка-ссылка на отдельный бот поддержки. */
 export const supportKeyboard = (supportUrl: string): InlineKeyboard =>
   new InlineKeyboard().url("💬 Открыть поддержку", supportUrl);
+
+/** Кнопка «поделиться» реферальной ссылкой через диалог Telegram. */
+export const referralKeyboard = (link: string): InlineKeyboard => {
+  const text = encodeURIComponent(
+    "Попробуй этот VPN — работает даже там, где обычные не подключаются",
+  );
+  const share = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
+  return new InlineKeyboard().url("📤 Пригласить друга", share);
+};

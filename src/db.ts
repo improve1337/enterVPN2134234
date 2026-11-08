@@ -7,6 +7,8 @@ import type {
   KeyStatus,
   OrderRecord,
   OrderStatus,
+  ReferralRecord,
+  ReferralStatus,
   RequestRecord,
   RequestStatus,
   UserRecord,
@@ -25,7 +27,9 @@ CREATE TABLE IF NOT EXISTS users (
   traffic_limit_gb      INTEGER,
   marzban_username      TEXT,
   subscription_url      TEXT,
-  auto_renew            INTEGER NOT NULL DEFAULT 0
+  auto_renew            INTEGER NOT NULL DEFAULT 0,
+  referred_by           INTEGER,
+  referral_bonus_days   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -112,6 +116,18 @@ CREATE TABLE IF NOT EXISTS requests (
 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
 CREATE INDEX IF NOT EXISTS idx_requests_user ON requests(telegram_id);
 
+CREATE TABLE IF NOT EXISTS referrals (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  inviter_id  INTEGER NOT NULL,
+  invited_id  INTEGER NOT NULL UNIQUE,
+  status      TEXT NOT NULL,
+  bonus_days  INTEGER NOT NULL,
+  created_at  TEXT NOT NULL,
+  rewarded_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_referrals_inviter ON referrals(inviter_id);
+
 `;
 
 /** Путь к БД может лежать в ещё не созданной папке (./data). */
@@ -128,9 +144,33 @@ export function initDatabase(): void {
   raw.exec("PRAGMA journal_mode = WAL;");
   raw.exec("PRAGMA foreign_keys = ON;");
   raw.exec(SCHEMA);
+  migrateUserColumns();
   // Отозванные ключи не храним: отзыв удаляет запись. Здесь подчищаем те,
   // что остались от прежней версии (когда ключ помечался статусом `revoked`).
   raw.exec("DELETE FROM keys WHERE status = 'revoked'");
+}
+
+/**
+ * Добавляет колонки, появившиеся после первой версии схемы. `CREATE TABLE
+ * IF NOT EXISTS` их к уже существующей таблице не добавит, поэтому проверяем
+ * `PRAGMA table_info` и делаем `ALTER TABLE` только при необходимости.
+ */
+function migrateUserColumns(): void {
+  const columns = new Set(
+    (
+      raw.prepare("PRAGMA table_info(users)").all() as unknown as {
+        name: string;
+      }[]
+    ).map((column) => column.name),
+  );
+  if (!columns.has("referred_by")) {
+    raw.exec("ALTER TABLE users ADD COLUMN referred_by INTEGER");
+  }
+  if (!columns.has("referral_bonus_days")) {
+    raw.exec(
+      "ALTER TABLE users ADD COLUMN referral_bonus_days INTEGER NOT NULL DEFAULT 0",
+    );
+  }
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -154,6 +194,8 @@ interface UserRow {
   marzban_username: string | null;
   subscription_url: string | null;
   auto_renew: number;
+  referred_by: number | null;
+  referral_bonus_days: number;
 }
 
 interface OrderRow {
@@ -183,6 +225,8 @@ const toUser = (row: UserRow): UserRecord => ({
   marzbanUsername: row.marzban_username,
   subscriptionUrl: row.subscription_url,
   autoRenew: Number(row.auto_renew),
+  referredBy: row.referred_by === null ? null : Number(row.referred_by),
+  referralBonusDays: Number(row.referral_bonus_days),
 });
 
 const toOrder = (row: OrderRow): OrderRecord => ({
@@ -862,6 +906,120 @@ export function resolveRequest(
       "UPDATE requests SET status = ?, resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending'",
     )
     .run(status, nowIso(), resolvedBy, id);
+}
+
+// --- Рефералы ---
+
+interface ReferralRow {
+  id: number;
+  inviter_id: number;
+  invited_id: number;
+  status: string;
+  bonus_days: number;
+  created_at: string;
+  rewarded_at: string | null;
+}
+
+const toReferral = (row: ReferralRow): ReferralRecord => ({
+  id: Number(row.id),
+  inviterId: Number(row.inviter_id),
+  invitedId: Number(row.invited_id),
+  status: row.status as ReferralStatus,
+  bonusDays: Number(row.bonus_days),
+  createdAt: row.created_at,
+  rewardedAt: row.rewarded_at,
+});
+
+/** Запоминает, кто пригласил пользователя. `false` — он уже был приглашён. */
+export function setReferredBy(telegramId: number, inviterId: number): boolean {
+  const result = raw
+    .prepare(
+      "UPDATE users SET referred_by = ? WHERE telegram_id = ? AND referred_by IS NULL",
+    )
+    .run(inviterId, telegramId);
+  return Number(result.changes) > 0;
+}
+
+export function createReferral(input: {
+  inviterId: number;
+  invitedId: number;
+  bonusDays: number;
+}): ReferralRecord {
+  raw
+    .prepare(
+      `INSERT INTO referrals (inviter_id, invited_id, status, bonus_days, created_at)
+       VALUES (?, ?, 'pending', ?, ?)`,
+    )
+    .run(input.inviterId, input.invitedId, input.bonusDays, nowIso());
+  return getReferralByInvited(input.invitedId) as ReferralRecord;
+}
+
+export function getReferralByInvited(
+  invitedId: number,
+): ReferralRecord | undefined {
+  const row = raw
+    .prepare("SELECT * FROM referrals WHERE invited_id = ?")
+    .get(invitedId) as ReferralRow | undefined;
+  return row ? toReferral(row) : undefined;
+}
+
+/**
+ * Идемпотентная отметка награды. Возвращает `undefined`, если реферал уже был
+ * награждён — тогда бонус повторно не начисляется.
+ */
+export function markReferralRewarded(
+  invitedId: number,
+): ReferralRecord | undefined {
+  const result = raw
+    .prepare(
+      "UPDATE referrals SET status = 'rewarded', rewarded_at = ? WHERE invited_id = ? AND status = 'pending'",
+    )
+    .run(nowIso(), invitedId);
+  if (Number(result.changes) === 0) return undefined;
+  return getReferralByInvited(invitedId);
+}
+
+export function listReferralsByInviter(inviterId: number): ReferralRecord[] {
+  const rows = raw
+    .prepare(
+      "SELECT * FROM referrals WHERE inviter_id = ? ORDER BY created_at DESC",
+    )
+    .all(inviterId) as unknown as ReferralRow[];
+  return rows.map(toReferral);
+}
+
+export function countReferralsByInviter(
+  inviterId: number,
+  status?: ReferralStatus,
+): number {
+  const row = (
+    status
+      ? raw
+          .prepare(
+            "SELECT COUNT(*) AS c FROM referrals WHERE inviter_id = ? AND status = ?",
+          )
+          .get(inviterId, status)
+      : raw
+          .prepare("SELECT COUNT(*) AS c FROM referrals WHERE inviter_id = ?")
+          .get(inviterId)
+  ) as { c: number } | undefined;
+  return row ? Number(row.c) : 0;
+}
+
+/** Копит «запасные» дни бонуса — когда у пригласившего нет активной подписки. */
+export function addReferralBonusDays(telegramId: number, days: number): void {
+  if (days <= 0) return;
+  raw
+    .prepare(
+      "UPDATE users SET referral_bonus_days = referral_bonus_days + ? WHERE telegram_id = ?",
+    )
+    .run(days, telegramId);
+}
+
+export function clearReferralBonusDays(telegramId: number): void {
+  raw
+    .prepare("UPDATE users SET referral_bonus_days = 0 WHERE telegram_id = ?")
+    .run(telegramId);
 }
 
 export function closeDatabase(): void {

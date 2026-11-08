@@ -54,6 +54,22 @@ const schema = z.object({
   MARZBAN_PASSWORD: z.string().optional(),
   PLATEGA_MERCHANT_ID: z.string().optional(),
   PLATEGA_SECRET: z.string().optional(),
+  // Coinso — криптопроцессинг (СБП, P2P, карты, крипта). Secret Key — он же
+  // ключ подписи вебхука; project_id — числовой ID проекта из кабинета.
+  COINSO_SECRET_KEY: z.string().optional(),
+  COINSO_PROJECT_ID: z.coerce.number().int().positive().optional(),
+  COINSO_API_URL: z.string().default("https://coinso.io"),
+  // Создание счёта СБП по h2h у Coinso может занимать до 30 с.
+  COINSO_TIMEOUT_MS: z.coerce.number().int().min(5000).max(120000).default(40000),
+  // Выдавать доступ по тестовым платежам Coinso. Только для локальной отладки:
+  // в бою должно быть false, иначе при включённом тест-режиме раздашь подписки.
+  COINSO_DELIVER_TEST: boolFromString(false),
+  // Реферальная программа: ссылка вида ?start=ref_<telegramId>.
+  REFERRAL_ENABLED: boolFromString(true),
+  // Сколько дней получает пригласивший за друга, оформившего подписку.
+  REFERRAL_BONUS_DAYS: z.coerce.number().int().min(0).max(365).default(7),
+  // Сколько дополнительных дней к пробному получает приглашённый.
+  REFERRAL_INVITEE_DAYS: z.coerce.number().int().min(0).max(365).default(3),
 });
 
 const parsed = schema.safeParse(process.env);
@@ -100,8 +116,20 @@ export const config = {
     merchantId: env.PLATEGA_MERCHANT_ID,
     secret: env.PLATEGA_SECRET,
   },
+  coinso: {
+    secretKey: env.COINSO_SECRET_KEY,
+    projectId: env.COINSO_PROJECT_ID,
+    apiUrl: env.COINSO_API_URL.replace(/\/+$/, ""),
+    timeoutMs: env.COINSO_TIMEOUT_MS,
+    deliverTest: env.COINSO_DELIVER_TEST,
+  },
   mockLandingUrl: env.MOCK_LANDING_URL,
   keyCodePrefix: env.KEY_CODE_PREFIX.trim().toUpperCase() || "ENT",
   keysPageSize: env.KEYS_PAGE_SIZE,
   botUsername: env.BOT_USERNAME,
+  referral: {
+    enabled: env.REFERRAL_ENABLED,
+    bonusDays: env.REFERRAL_BONUS_DAYS,
+    inviteeDays: env.REFERRAL_INVITEE_DAYS,
+  },
 } as const;

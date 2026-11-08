@@ -7,7 +7,11 @@ import type { Bot } from "grammy";
 import { config } from "./config.js";
 import { errorInfo, logger } from "./logger.js";
 import { fulfillPaidOrder } from "./services/fulfillment.js";
-import { confirmPayment, isSimulatedPayment } from "./services/payments.js";
+import {
+  confirmPayment,
+  isSimulatedPayment,
+  verifyCoinsoSignature,
+} from "./services/payments.js";
 import { getOrder, getUser, listOrders, stats } from "./db.js";
 
 export function createServer(bot: Bot) {
@@ -15,6 +19,22 @@ export function createServer(bot: Bot) {
     loggerInstance: logger as unknown as FastifyBaseLogger,
     trustProxy: true,
   });
+
+  // Сохраняем сырое тело запроса: подпись вебхука Coinso считается по нему,
+  // а не по результату JSON.parse.
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "buffer" },
+    (request, body, done) => {
+      (request as { rawBody?: Buffer }).rawBody = body as Buffer;
+      try {
+        const text = (body as Buffer).toString("utf8");
+        done(null, text.length > 0 ? JSON.parse(text) : {});
+      } catch (error) {
+        done(error as Error, undefined);
+      }
+    },
+  );
 
   app.get("/health", async () => ({
     ok: true,
@@ -109,6 +129,64 @@ export function createServer(bot: Bot) {
       };
     }
     return reply.code(501).send({ ok: false, error: "Platega не настроена" });
+  });
+
+  // Вебхук Coinso: подпись X-Signature = HMAC-SHA256 от сырого тела.
+  app.post("/webhooks/coinso", async (request, reply) => {
+    const rawBody = (request as { rawBody?: Buffer }).rawBody;
+    const signature = request.headers["x-signature"];
+    if (
+      !rawBody ||
+      typeof signature !== "string" ||
+      !verifyCoinsoSignature(rawBody, signature)
+    ) {
+      logger.warn("Coinso webhook: неверная подпись");
+      return reply.code(401).send({ ok: false });
+    }
+
+    const body = (request.body ?? {}) as {
+      event?: string;
+      invoice_id?: string;
+      transaction_id?: number;
+      custom?: string;
+      amount?: number | string;
+      test_mode?: boolean;
+      payment_method?: string;
+    };
+
+    if (body.event !== "payment.success") {
+      logger.info(
+        { event: body.event, invoice: body.invoice_id },
+        "Coinso webhook: событие не success",
+      );
+      return { ok: true, ignored: body.event ?? null };
+    }
+    if (body.test_mode && !config.coinso.deliverTest) {
+      logger.info(
+        { invoice: body.invoice_id },
+        "Coinso webhook: тестовый платёж — выдачу пропускаем",
+      );
+      return { ok: true, test: true };
+    }
+    const orderId = body.custom;
+    if (!orderId) return { ok: true, ignored: "no custom" };
+
+    const amount = Number(body.amount);
+    const result = confirmPayment({
+      orderId,
+      ...(Number.isFinite(amount) ? { amountRub: amount } : {}),
+    });
+    if (!result.ok) {
+      // Повторный success — обычная ситуация: Coinso повторяет вебхук.
+      return { ok: true, reason: result.reason ?? null };
+    }
+    const fulfilled = await fulfillPaidOrder(orderId);
+    return {
+      ok: true,
+      fulfilled: fulfilled.ok
+        ? { username: fulfilled.subscription.username }
+        : { ok: false, reason: fulfilled.reason },
+    };
   });
 
   if (config.mode === "webhook") {

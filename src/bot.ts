@@ -45,9 +45,15 @@ import {
   confirmPayment,
   createPayment,
   isSimulatedPayment,
+  verifyPayment,
 } from "./services/payments.js";
 import { marzbanOverview } from "./services/provision.js";
 import { broadcastMessage } from "./services/broadcast.js";
+import {
+  bindReferral,
+  referralStats,
+  setReferralRewardNotifier,
+} from "./services/referrals.js";
 import {
   approveRequest,
   pendingRequests,
@@ -61,6 +67,7 @@ import { buildClientOptions, syncChatCommands } from "./telegram.js";
 import {
   ADMIN_MENU_LABEL,
   OFFER_MENU_LABEL,
+  REFERRAL_MENU_LABEL,
   adminKeyboard,
   adminsKeyboard,
   isMainMenuLabel,
@@ -72,6 +79,7 @@ import {
   payKeyboard,
   paymentsKeyboard,
   plansKeyboard,
+  referralKeyboard,
   requestsKeyboard,
   broadcastPreviewKeyboard,
   supportKeyboard,
@@ -112,6 +120,9 @@ import {
   paymentSuccessText,
   paymentsPanelText,
   planListText,
+  referralJoinedText,
+  referralRewardText,
+  referralText,
   requestApprovedToUserText,
   requestDuplicateText,
   requestRejectedToUserText,
@@ -133,6 +144,15 @@ export function createBot(): Bot {
   const bot = new Bot(config.botToken, { client: buildClientOptions() });
 
   const tracker = createMessageTracker();
+
+  // Уведомляем пригласившего, когда за приглашённого начислена награда.
+  setReferralRewardNotifier(async (info) => {
+    await bot.api
+      .sendMessage(info.inviterId, referralRewardText(info), {
+        parse_mode: "Markdown",
+      })
+      .catch(() => undefined);
+  });
 
   /** Удаляет сообщения, отправленные на прошлом шаге. */
   const cleanupChat = async (ctx: Context): Promise<void> => {
@@ -390,17 +410,43 @@ export function createBot(): Bot {
     track(ctx);
     const payload = ctx.match.trim();
 
+    if (payload.startsWith("ref_")) {
+      const inviterId = Number(payload.slice("ref_".length));
+      if (ctx.from && Number.isInteger(inviterId) && inviterId > 0) {
+        const result = bindReferral({ invitedId: ctx.from.id, inviterId });
+        if (result.ok) {
+          audit(ctx.from.id, "referral_bound", String(inviterId));
+          await replyMarkdown(
+            ctx,
+            referralJoinedText(config.referral.inviteeDays),
+          );
+        }
+      }
+    }
+
     if (payload.startsWith("paid_")) {
-      const order = getOrder(payload.slice("paid_".length));
-      if (
-        order &&
-        ctx.from &&
-        order.telegramId === ctx.from.id &&
-        order.status === "pending"
-      ) {
-        const result = confirmPayment({ orderId: order.id });
+      const orderId = payload.slice("paid_".length);
+      const order = getOrder(orderId);
+      if (order && ctx.from && order.telegramId === ctx.from.id) {
+        // Возврат покупателя — не доказательство оплаты: спрашиваем статус
+        // у провайдера (или подтверждаем mock-платёж).
+        const result = await verifyPayment(orderId);
         if (result.ok && result.order) {
           await grantPaidOrder(ctx, result.order.id, result.order.planCode);
+          return;
+        }
+        if (result.reason === "pending") {
+          await replyMarkdown(
+            ctx,
+            "⏳ Платёж ещё не подтверждён. Если вы оплатили только что — подождите минуту и откройте «📦 Моя подписка».",
+          );
+          return;
+        }
+        if (result.reason === "already_paid") {
+          await replyMarkdown(
+            ctx,
+            "Доступ по этому заказу уже выдан. Откройте «📦 Моя подписка».",
+          );
           return;
         }
       }
@@ -428,6 +474,11 @@ export function createBot(): Bot {
     await sendMenu(ctx, () =>
       ctx.reply("Главное меню:", { reply_markup: keyboard }),
     );
+  });
+
+  bot.command("ref", async (ctx) => {
+    track(ctx);
+    await sendReferral(ctx);
   });
 
   bot.hears("🎁 Пробный доступ", async (ctx) => {
@@ -461,6 +512,11 @@ export function createBot(): Bot {
   bot.hears("📦 Моя подписка", async (ctx) => {
     track(ctx);
     await sendSubscription(ctx);
+  });
+
+  bot.hears(REFERRAL_MENU_LABEL, async (ctx) => {
+    track(ctx);
+    await sendReferral(ctx);
   });
 
   bot.hears("❓ Помощь", (ctx) => replyMarkdown(ctx, helpText()));
@@ -915,15 +971,19 @@ export function createBot(): Bot {
       await ctx.answerCallbackQuery({ text: "Заказ не найден", show_alert: true });
       return;
     }
-    if (order.status === "pending") {
-      await ctx.answerCallbackQuery({
-        text: "Платёж ещё не подтверждён. Попробуйте через минуту.",
-        show_alert: true,
-      });
+    const result = await verifyPayment(order.id);
+    if (result.ok && result.order) {
+      await ctx.answerCallbackQuery({ text: "Оплата подтверждена" });
+      await grantPaidOrder(ctx, result.order.id, result.order.planCode);
       return;
     }
-    await ctx.answerCallbackQuery({ text: "Оплата подтверждена" });
-    await grantPaidOrder(ctx, order.id, order.planCode);
+    await ctx.answerCallbackQuery({
+      text:
+        result.reason === "already_paid"
+          ? "Оплата уже подтверждена"
+          : "Платёж ещё не подтверждён. Попробуйте через минуту.",
+      show_alert: true,
+    });
   });
 
   // Демонстрационная оплата: доступна только в MOCK_MODE.
@@ -1358,6 +1418,15 @@ export function createBot(): Bot {
             )
         : plansKeyboard(isPaymentsEnabled());
     await replyMarkdown(ctx, text, keyboard);
+  }
+
+  async function sendReferral(ctx: Context): Promise<void> {
+    const data = referralStats(fromId(ctx));
+    await replyMarkdown(
+      ctx,
+      referralText(data),
+      data.link ? referralKeyboard(data.link) : undefined,
+    );
   }
 
   bot.callbackQuery("sub:show", async (ctx) => {

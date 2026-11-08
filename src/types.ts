@@ -33,6 +33,10 @@ export interface UserRecord {
   marzbanUsername: string | null;
   subscriptionUrl: string | null;
   autoRenew: number;
+  /** Кто пригласил пользователя (Telegram ID), если он пришёл по реферальной ссылке. */
+  referredBy: number | null;
+  /** Накопленные, но ещё не применённые дни реферального бонуса. */
+  referralBonusDays: number;
 }
 
 export interface OrderRecord {
@@ -121,4 +125,20 @@ export interface RequestRecord {
   resolvedAt: string | null;
   /** Кто из админов обработал заявку. */
   resolvedBy: number | null;
+}
+
+/** Статус реферала: `pending` — ждём первый платёж, `rewarded` — бонус начислен. */
+export type ReferralStatus = "pending" | "rewarded";
+
+export interface ReferralRecord {
+  id: number;
+  /** Кто пригласил. */
+  inviterId: number;
+  /** Кого пригласили. */
+  invitedId: number;
+  status: ReferralStatus;
+  /** Сколько дней получает пригласивший. */
+  bonusDays: number;
+  createdAt: string;
+  rewardedAt: string | null;
 }

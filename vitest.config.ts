@@ -9,6 +9,8 @@ export default defineConfig({
       DATABASE_PATH: ":memory:",
       NODE_ENV: "test",
       LOG_LEVEL: "silent",
+      COINSO_SECRET_KEY: "test-secret-key",
+      COINSO_PROJECT_ID: "1",
     },
     pool: "forks",
   },

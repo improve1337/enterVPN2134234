@@ -1,14 +1,18 @@
 import {
   addDays,
+  clearReferralBonusDays,
   getUser,
   markTrialUsed,
   saveSubscription,
   upsertUser,
 } from "../db.js";
+import { config } from "../config.js";
+import { errorInfo, logger } from "../logger.js";
 import { TRIAL, getPlan } from "../plans.js";
 import type { Subscription } from "../types.js";
 import { recordSubscriptionKey } from "./keys.js";
 import { provisionSubscription } from "./provision.js";
+import { rewardReferrer } from "./referrals.js";
 
 export interface TrialOutcome {
   granted: boolean;
@@ -22,12 +26,15 @@ export async function startTrial(telegramId: number): Promise<TrialOutcome> {
   if (user.banned) return { granted: false, reason: "banned" };
   if (user.trialUsed) return { granted: false, reason: "already_used" };
 
+  // Приглашённый по реферальной ссылке получает удлинённый пробный период.
+  const trialDays =
+    TRIAL.days + (user.referredBy ? config.referral.inviteeDays : 0);
   const result = await provisionSubscription({
     telegramId,
     username: user.username,
     previousMarzbanUsername: user.marzbanUsername,
     planCode: "trial",
-    days: TRIAL.days,
+    days: trialDays,
     trafficLimitGb: TRIAL.trafficGb,
   });
   markTrialUsed(telegramId);
@@ -48,7 +55,7 @@ export async function startTrial(telegramId: number): Promise<TrialOutcome> {
     telegramId,
     planCode: "trial",
     planName: subscription.planName,
-    days: TRIAL.days,
+    days: trialDays,
     trafficLimitGb: TRIAL.trafficGb,
     subscription,
   });
@@ -68,15 +75,18 @@ export async function activatePlan(
 
   const user = getUser(telegramId);
   const currentExpiry = user?.subscriptionExpiresAt ?? null;
+  // Отложенные реферальные дни добавляем к оплаченному тарифу.
+  const bonusDays = user?.referralBonusDays ?? 0;
   const result = await provisionSubscription({
     telegramId,
     username: user?.username ?? null,
     previousMarzbanUsername: user?.marzbanUsername ?? null,
     planCode,
-    days: plan.days,
+    days: plan.days + bonusDays,
     trafficLimitGb: plan.trafficGb,
     extendFrom: currentExpiry,
   });
+  if (bonusDays > 0) clearReferralBonusDays(telegramId);
   saveSubscription({
     telegramId,
     planCode,
@@ -99,6 +109,16 @@ export async function activatePlan(
     subscription,
     orderId: options.orderId ?? null,
   });
+
+  // Первая платная подписка приглашённого — награждаем того, кто его позвал.
+  try {
+    await rewardReferrer(telegramId);
+  } catch (error) {
+    logger.warn(
+      { err: errorInfo(error), telegramId },
+      "не удалось начислить реферальный бонус",
+    );
+  }
   return subscription;
 }
 
