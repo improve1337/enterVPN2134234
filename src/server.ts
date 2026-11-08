@@ -13,6 +13,7 @@ import {
   verifyCoinsoSignature,
 } from "./services/payments.js";
 import { getOrder, getUser, listOrders, stats } from "./db.js";
+import { getKey } from "./services/keys.js";
 
 export function createServer(bot: Bot) {
   const app = Fastify({
@@ -71,6 +72,27 @@ export function createServer(bot: Bot) {
   });
 
   app.get("/api/stats", async () => stats());
+
+  /**
+   * Личный кабинет на сайте: данные по коду ключа. Код — и есть credential,
+   * поэтому по нему отдаём статус, срок и ссылку-подписку.
+   */
+  app.get("/api/key/:code", async (request, reply) => {
+    const params = request.params as { code: string };
+    const key = getKey(params.code);
+    if (!key) return reply.code(404).send({ ok: false, error: "not_found" });
+    return {
+      ok: true,
+      code: key.code,
+      planName: key.planName,
+      status: key.status,
+      trafficLimitGb: key.trafficLimitGb,
+      issuedAt: key.issuedAt,
+      activatedAt: key.activatedAt,
+      expiresAt: key.expiresAt,
+      subscriptionUrl: key.subscriptionUrl,
+    };
+  });
 
   // Mock-подтверждение оплаты: эмулирует callback платёжки локально.
   app.post("/mock/pay/:orderId", async (request, reply) => {
