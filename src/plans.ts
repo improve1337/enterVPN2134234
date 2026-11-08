@@ -25,7 +25,7 @@ export const PLANS: readonly Plan[] = [
 
 export const TRIAL = {
   days: 3,
-  trafficGb: null,
+  trafficGb: 10,
   deviceLimit: 5,
 } as const;
 

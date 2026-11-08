@@ -130,6 +130,7 @@ export const trialGrantedText = (subscriptionUrl: string, expiresAt: string): st
     "🎉 *Пробный доступ активирован!*",
     "",
     `Действует до: *${fmtDate(expiresAt)}*`,
+    `Трафик: ${trafficLabel(TRIAL.trafficGb)}`,
     "",
     "🔗 Ваша ссылка-подписка:",
     `\`${subscriptionUrl}\``,

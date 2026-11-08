@@ -71,7 +71,7 @@ describe("тарифы и продление", () => {
     expect(PLANS.map((plan) => plan.days)).toEqual([30, 90]);
     expect(PLANS.map((plan) => plan.trafficGb)).toEqual([100, 400]);
     for (const plan of PLANS) expect(plan.deviceLimit).toBe(5);
-    expect(TRIAL.trafficGb).toBeNull();
+    expect(TRIAL.trafficGb).toBe(10);
     expect(TRIAL.deviceLimit).toBe(5);
   });
 
