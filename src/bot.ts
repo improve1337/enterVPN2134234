@@ -354,11 +354,30 @@ export function createBot(): Bot {
   };
 
   /**
-   * Экран с картинкой. Telegram не переиспользует загруженный файл по пути,
-   * поэтому запоминаем `file_id` первого фото и дальше шлём его — иначе каждый
-   * показ экрана заливал бы картинку заново.
+   * Экран с обложкой (картинка `.png`/`.jpg` или анимация `.gif`/`.mp4`).
+   * Telegram не переиспользует загруженный файл по локальному пути, поэтому
+   * запоминаем `file_id` первой отправки и дальше шлём его мгновенно.
    */
-  const photoFileIds = new Map<string, string>();
+  const mediaFileIds = new Map<string, { fileId: string; animation: boolean }>();
+
+  /**
+   * Подбирает актуальный файл обложки: если в конфиге указан `.png`, но рядом
+   * есть одноимённый `.gif` (или наоборот), берёт существующий, отдавая
+   * приоритет `.gif`-анимации.
+   */
+  const resolveCoverPath = (rawPath: string): string | null => {
+    const gifCandidate = rawPath.replace(/\.(png|jpe?g)$/i, ".gif");
+    if (/\.gif$/i.test(gifCandidate) && existsSync(gifCandidate)) {
+      return gifCandidate;
+    }
+    if (existsSync(rawPath)) return rawPath;
+    const pngCandidate = rawPath.replace(/\.(gif|mp4)$/i, ".png");
+    if (existsSync(pngCandidate)) return pngCandidate;
+    return null;
+  };
+
+  const isAnimationFile = (filePath: string): boolean =>
+    /\.(gif|mp4)$/i.test(filePath);
 
   /** Черновики рассылки: админ → пост, который он собирается отправить. */
   const broadcastDrafts = new Map<
@@ -377,51 +396,107 @@ export function createBot(): Bot {
       parse_mode: "Markdown" as const,
       ...(keyboard ? { reply_markup: keyboard } : {}),
     };
-    const cached = photoFileIds.get(imagePath);
+    const resolved = resolveCoverPath(imagePath);
+    const cacheKey = resolved ?? imagePath;
+    const cached = mediaFileIds.get(cacheKey);
     if (cached) {
       try {
-        await ctx.replyWithPhoto(cached, options);
+        if (cached.animation) {
+          await ctx.replyWithAnimation(cached.fileId, options);
+        } else {
+          await ctx.replyWithPhoto(cached.fileId, options);
+        }
         return;
       } catch (error) {
-        photoFileIds.delete(imagePath);
+        mediaFileIds.delete(cacheKey);
         logger.warn(
-          { err: errorInfo(error), path: imagePath },
-          "не удалось отправить фото по file_id",
+          { err: errorInfo(error), path: cacheKey },
+          "не удалось отправить медиа по file_id",
         );
       }
     }
-    if (existsSync(imagePath)) {
+    if (resolved) {
+      const animation = isAnimationFile(resolved);
       try {
-        const sent = await ctx.replyWithPhoto(new InputFile(imagePath), options);
-        const sizes = sent.photo;
-        const fileId = sizes?.[sizes.length - 1]?.file_id;
-        if (fileId) photoFileIds.set(imagePath, fileId);
+        if (animation) {
+          const sent = await ctx.replyWithAnimation(
+            new InputFile(resolved),
+            options,
+          );
+          const fileId =
+            sent.animation?.file_id ??
+            (sent as unknown as { document?: { file_id?: string } }).document
+              ?.file_id;
+          if (fileId) mediaFileIds.set(cacheKey, { fileId, animation: true });
+        } else {
+          const sent = await ctx.replyWithPhoto(new InputFile(resolved), options);
+          const sizes = sent.photo;
+          const fileId = sizes?.[sizes.length - 1]?.file_id;
+          if (fileId) mediaFileIds.set(cacheKey, { fileId, animation: false });
+        }
         return;
       } catch (error) {
         logger.warn(
-          { err: errorInfo(error), path: imagePath },
-          "не удалось отправить картинку, отправляю текст",
+          { err: errorInfo(error), path: resolved },
+          "не удалось отправить обложку, отправляю текст",
         );
       }
     } else {
-      logger.warn({ path: imagePath }, "файл картинки не найден");
+      logger.warn({ path: imagePath }, "файл обложки не найден");
     }
     await replyMarkdown(ctx, caption, keyboard);
   };
 
-  /** Приветствие с баннером; если файла нет — обычный текст. */
+  /** Приветствие с баннером (GIF или PNG); если файла нет — обычный текст. */
   const sendWelcome = async (ctx: Context, name: string | null): Promise<void> => {
     const caption = welcomeText(name);
     const keyboard = mainKeyboard(ctx.from ? isAdmin(ctx.from.id) : false);
-    if (existsSync(config.bannerPath)) {
+    const options = {
+      caption,
+      parse_mode: "Markdown" as const,
+      reply_markup: keyboard,
+    };
+    const resolved = resolveCoverPath(config.bannerPath);
+    const cacheKey = resolved ?? config.bannerPath;
+    const cached = mediaFileIds.get(cacheKey);
+    if (cached) {
       try {
         await sendMenu(ctx, () =>
-          ctx.replyWithPhoto(new InputFile(config.bannerPath), {
-            caption,
-            parse_mode: "Markdown",
-            reply_markup: keyboard,
-          }),
+          cached.animation
+            ? ctx.replyWithAnimation(cached.fileId, options)
+            : ctx.replyWithPhoto(cached.fileId, options),
         );
+        return;
+      } catch (error) {
+        mediaFileIds.delete(cacheKey);
+        logger.warn(
+          { err: errorInfo(error), path: cacheKey },
+          "не удалось отправить баннер по file_id",
+        );
+      }
+    }
+    if (resolved) {
+      const animation = isAnimationFile(resolved);
+      try {
+        await sendMenu(ctx, async () => {
+          if (animation) {
+            const sent = await ctx.replyWithAnimation(
+              new InputFile(resolved),
+              options,
+            );
+            const fileId =
+              sent.animation?.file_id ??
+              (sent as unknown as { document?: { file_id?: string } }).document
+                ?.file_id;
+            if (fileId) mediaFileIds.set(cacheKey, { fileId, animation: true });
+            return sent;
+          }
+          const sent = await ctx.replyWithPhoto(new InputFile(resolved), options);
+          const sizes = sent.photo;
+          const fileId = sizes?.[sizes.length - 1]?.file_id;
+          if (fileId) mediaFileIds.set(cacheKey, { fileId, animation: false });
+          return sent;
+        });
         return;
       } catch (error) {
         logger.warn(

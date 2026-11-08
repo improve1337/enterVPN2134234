@@ -15,7 +15,9 @@
     "start:prod": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "covers": "node scripts/motion/render.mjs",
+    "avatars": "node scripts/motion/avatar.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

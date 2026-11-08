@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>EnterVPN — motion covers</title>
+<!--
+  Моушен-обложки для бота в стиле iOS 18 (тёмная тема).
+  Страница детерминированная: кадр задаётся вызовом window.renderAt(секунды),
+  render.mjs проходит по таймлайну и снимает скриншоты через Chrome DevTools Protocol.
+  Открыть для превью: scenes.html?scene=welcome&preview=1
+  Сцены: welcome | plans | support | supbot
+-->
+<style>
+  @font-face {
+    font-family: "Inter";
+    src: url("fonts/InterVariable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: block;
+  }
+
+  :root {
+    --bg: #04060b;
+    --ink: #f2f5f9;
+    --muted: #9aa6b8;
+    --faint: #5e6a7d;
+    --accent: #00efa5;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); }
+
+  #stage {
+    position: relative;
+    width: 1280px;
+    height: 720px;
+    overflow: hidden;
+    font-family: "Inter", "Segoe UI Variable Display", "Segoe UI", sans-serif;
+    color: var(--ink);
+    font-feature-settings: "cv11", "ss03";
+    -webkit-font-smoothing: antialiased;
+    background: var(--bg);
+  }
+
+  /* ---------- Фон: статичный «меш» как у обоев iOS 18 ---------- */
+  .bg { position: absolute; inset: 0; }
+  .blob { position: absolute; border-radius: 50%; filter: blur(90px); }
+  .b1 { width: 700px; height: 560px; left: -220px; top: 300px; background: #0c3a47; opacity: .62; }
+  .b2 { width: 640px; height: 520px; right: -200px; top: -200px; background: #262c63; opacity: .55; }
+  .b3 { width: 560px; height: 300px; left: 360px; top: 560px; background: #00efa5; opacity: .07; }
+  .b4 { width: 520px; height: 420px; left: 420px; top: 120px; background: #1a2232; opacity: .7; }
+  .vignette {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(0,0,0,.55) 100%),
+      linear-gradient(180deg, rgba(255,255,255,.025), transparent 30%);
+  }
+
+  #content { position: absolute; inset: 0; transform-origin: 50% 50%; }
+
+  /* ---------- Dynamic Island ---------- */
+  .island {
+    position: absolute; left: 50%; top: 20px;
+    transform: translateX(-50%);
+    background: #000;
+    border-radius: 999px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 12px 30px rgba(0,0,0,.55);
+    overflow: hidden;
+  }
+  .island-inner {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 18px 0 14px;
+    white-space: nowrap;
+  }
+  .island-left, .island-right { display: flex; align-items: center; gap: 9px; }
+  .island-left b { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+  .island-right span { font-size: 13px; font-weight: 550; color: var(--muted); }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px rgba(0,239,165,.6); }
+  .bars { display: flex; align-items: center; gap: 3px; height: 18px; margin-left: 4px; }
+  .bars i { display: block; width: 3px; border-radius: 2px; background: #c9d2de; }
+
+  /* ---------- Заголовок ---------- */
+  .title-wrap {
+    position: absolute; left: 0; right: 0; top: 268px;
+    text-align: center;
+    transform-origin: 50% 0;
+  }
+  .title {
+    font-size: 108px; font-weight: 750; line-height: 1.04;
+    letter-spacing: -.045em;
+    white-space: pre;
+  }
+  .title .ch {
+    display: inline-block;
+    background: linear-gradient(180deg, #ffffff 25%, #b4bfcd 100%);
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+    padding: 0 .01em;
+  }
+  .subtitle {
+    position: absolute; left: 0; right: 0; top: 196px;
+    text-align: center;
+    font-size: 21px; font-weight: 450; color: var(--muted);
+    letter-spacing: -.005em;
+  }
+
+  /* ---------- Стекло ---------- */
+  .glass {
+    position: absolute;
+    border-radius: 34px;
+    background: linear-gradient(180deg, rgba(255,255,255,.085), rgba(255,255,255,.035));
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.16),
+      inset 0 0 0 1px rgba(255,255,255,.06),
+      0 40px 80px -30px rgba(0,0,0,.75);
+    overflow: hidden;
+  }
+  .sheen {
+    position: absolute; top: -20%; bottom: -20%; width: 34%;
+    background: linear-gradient(100deg, transparent, rgba(255,255,255,.07) 45%, rgba(255,255,255,.11) 50%, rgba(255,255,255,.07) 55%, transparent);
+    pointer-events: none;
+  }
+  .hairline { position: absolute; left: 30px; right: 30px; height: 1px; background: rgba(255,255,255,.07); }
+
+  .chip {
+    position: absolute; left: 50%; top: 592px;
+    transform: translateX(-50%);
+    height: 46px; padding: 0 22px 0 18px;
+    border-radius: 999px;
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,.07);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12), inset 0 0 0 1px rgba(255,255,255,.05);
+    white-space: nowrap;
+    font-size: 16px;
+  }
+  .chip b { font-weight: 650; }
+  .chip span { color: var(--muted); }
+
+  /* ---------- Welcome: док с клиентами ---------- */
+  .dock { left: 120px; top: 258px; width: 1040px; height: 300px; }
+  .dock-head { position: absolute; left: 34px; right: 34px; top: 26px; display: flex; justify-content: space-between; align-items: baseline; }
+  .dock-head b { font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
+  .dock-head span { font-size: 15px; color: var(--muted); }
+  .apps { position: absolute; left: 20px; right: 20px; top: 92px; display: grid; grid-template-columns: repeat(4, 1fr); }
+  .app { display: flex; flex-direction: column; align-items: center; }
+  .icon {
+    width: 96px; height: 96px; border-radius: 26px;
+    display: grid; place-items: center;
+    background: linear-gradient(160deg, #2b313c 0%, #161a21 55%, #0d1015 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.2),
+      inset 0 0 0 1px rgba(255,255,255,.06),
+      0 18px 34px -12px rgba(0,0,0,.8);
+  }
+  .icon svg { width: 48px; height: 48px; }
+  .app-name { margin-top: 16px; font-size: 20px; font-weight: 650; letter-spacing: -.01em; }
+  .app-clients { margin-top: 5px; font-size: 14.5px; color: var(--muted); }
+
+  /* ---------- Plans ---------- */
+  .card { top: 258px; width: 500px; height: 300px; }
+  .card-1 { left: 124px; }
+  .card-2 { left: 656px; }
+  .card-2.glass { box-shadow: inset 0 1px 0 rgba(255,255,255,.24), inset 0 0 0 1px rgba(255,255,255,.1), 0 40px 80px -30px rgba(0,0,0,.75); }
+  .card-label { position: absolute; left: 34px; top: 32px; display: flex; align-items: center; gap: 12px; }
+  .card-label b { font-size: 24px; font-weight: 650; letter-spacing: -.015em; }
+  .card-label span { font-size: 15px; color: var(--muted); }
+  .badge { height: 26px; padding: 0 10px; border-radius: 999px; background: var(--accent); color: #03140d; font-size: 13.5px; font-weight: 700; display: flex; align-items: center; }
+  .price { position: absolute; left: 32px; top: 84px; display: flex; align-items: baseline; gap: 12px; }
+  .price b { font-size: 84px; font-weight: 750; letter-spacing: -.045em; font-variant-numeric: tabular-nums; }
+  .price span { font-size: 18px; color: var(--muted); }
+  .feats { position: absolute; left: 34px; right: 34px; bottom: 30px; display: flex; gap: 14px; font-size: 16px; color: #d5dce6; }
+  .feats i { font-style: normal; color: var(--faint); }
+  .ring { position: absolute; right: 30px; top: 26px; width: 84px; height: 84px; }
+  .ring-text { position: absolute; inset: 0; display: grid; place-items: center; font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+  /* ---------- Support ---------- */
+  .chat { left: 190px; top: 252px; width: 900px; height: 296px; }
+  .chat-head { position: absolute; left: 26px; right: 30px; top: 22px; display: flex; align-items: center; gap: 14px; }
+  .avatar { width: 48px; height: 48px; border-radius: 14px; }
+  .avatar svg { width: 26px; height: 26px; }
+  .chat-head .who b { display: block; font-size: 17px; font-weight: 650; }
+  .chat-head .who span { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--muted); margin-top: 3px; }
+  .chat-head .who .live-dot { width: 6px; height: 6px; }
+  .ticket { margin-left: auto; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bubble {
+    position: absolute; max-width: 560px;
+    padding: 13px 18px; border-radius: 22px;
+    font-size: 17px; line-height: 1.4; letter-spacing: -.005em;
+  }
+  .bubble.out { right: 30px; top: 104px; border-bottom-right-radius: 8px; background: linear-gradient(180deg, #3f5070, #2e3b55); box-shadow: inset 0 1px 0 rgba(255,255,255,.14); transform-origin: 100% 100%; }
+  .bubble.in { left: 26px; top: 184px; border-bottom-left-radius: 8px; background: rgba(255,255,255,.085); box-shadow: inset 0 1px 0 rgba(255,255,255,.1); transform-origin: 0 100%; }
+  .bubble.in .ok { color: var(--muted); }
+  .typing { position: absolute; left: 26px; top: 184px; height: 46px; width: 78px; border-radius: 22px; border-bottom-left-radius: 8px; background: rgba(255,255,255,.085); display: flex; align-items: center; justify-content: center; gap: 6px; transform-origin: 0 100%; }
+  .typing i { width: 8px; height: 8px; border-radius: 50%; background: #c2cad6; display: block; }
+  .meta { position: absolute; right: 34px; top: 160px; font-size: 12.5px; color: var(--faint); }
+
+  #preview-bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 8px; background: #111; color: #aaa; font: 12px monospace; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="bg">
+    <div class="blob b4"></div>
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+    <div class="blob b3"></div>
+    <div class="vignette"></div>
+  </div>
+  <div id="content"></div>
+</div>
+
+<script>
+/* ===================== Утилиты таймлайна ===================== */
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const prog = (t, start, dur) => clamp((t - start) / dur);
+const lerp = (a, b, x) => a + (b - a) * x;
+const easeOut = (x) => 1 - Math.pow(1 - x, 3);
+const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+/** Затухающая пружина (как UISpringTimingParameters): x — секунды с начала. */
+function spring(x, freq = 1.5, damp = 0.75) {
+  if (x <= 0) return 0;
+  const w = 2 * Math.PI * freq;
+  const wd = w * Math.sqrt(1 - damp * damp);
+  return 1 - Math.exp(-damp * w * x) * (Math.cos(wd * x) + ((damp * w) / wd) * Math.sin(wd * x));
+}
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+function css(el, props) { for (const k in props) el.style[k] = props[k]; }
+const blur = (px) => (px > 0.05 ? `blur(${px.toFixed(2)}px)` : "none");
+
+/** Появление «из размытия»: подъём + проявление + расфокус → фокус. */
+function reveal(el, t, start, { dy = 26, blurPx = 12, dur = 0.6, scaleFrom = 1 } = {}) {
+  const x = t - start;
+  const o = easeOut(clamp(x / (dur * 0.8)));
+  const s = spring(x, 1.4, 0.82);
+  css(el, {
+    opacity: o.toFixed(3),
+    filter: blur((1 - easeOut(clamp(x / dur))) * blurPx),
+    transform: `translateY(${((1 - s) * dy).toFixed(2)}px) scale(${lerp(scaleFrom, 1, s).toFixed(4)})`,
+  });
+}
+
+/* ===================== Иконки ===================== */
+const GLYPH_GRAD = `<defs><linearGradient id="gg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#aab5c4"/></linearGradient></defs>`;
+const ICONS = {
+  apple: `<svg viewBox="0 0 24 24">${GLYPH_GRAD}<path fill="url(#gg)" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>`,
+  android: `<svg viewBox="0 0 24 24">${GLYPH_GRAD}<g fill="url(#gg)"><path d="M3.2 17.2a8.8 8.8 0 0 1 17.6 0z"/><rect x="5.6" y="5.2" width="1.5" height="4.6" rx=".75" transform="rotate(-30 6.35 7.5)"/><rect x="16.9" y="5.2" width="1.5" height="4.6" rx=".75" transform="rotate(30 17.65 7.5)"/></g><circle cx="8.4" cy="13.6" r="1.15" fill="#14181f"/><circle cx="15.6" cy="13.6" r="1.15" fill="#14181f"/></svg>`,
+  windows: `<svg viewBox="0 0 24 24">${GLYPH_GRAD}<g fill="url(#gg)"><rect x="3" y="3" width="8.4" height="8.4" rx="1"/><rect x="12.6" y="3" width="8.4" height="8.4" rx="1"/><rect x="3" y="12.6" width="8.4" height="8.4" rx="1"/><rect x="12.6" y="12.6" width="8.4" height="8.4" rx="1"/></g></svg>`,
+  mac: `<svg viewBox="0 0 24 24">${GLYPH_GRAD}<g fill="url(#gg)"><path fill-rule="evenodd" d="M4.6 4h14.8A1.6 1.6 0 0 1 21 5.6v9.8a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 15.4V5.6A1.6 1.6 0 0 1 4.6 4zm.4 2v9h14V6z"/><path d="M1.5 18h21v.3a1.6 1.6 0 0 1-1.6 1.5H3.1a1.6 1.6 0 0 1-1.6-1.5z"/></g></svg>`,
+  shield: `<svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 2.8 19.5 6v5.6c0 4.7-3.2 8.3-7.5 9.6-4.3-1.3-7.5-4.9-7.5-9.6V6z" fill="none" stroke="#f2f5f9" stroke-width="1.9" stroke-linejoin="round"/><path d="m8.7 12 2.3 2.3 4.3-4.6" fill="none" stroke="#00efa5" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  headset: `<svg viewBox="0 0 24 24">${GLYPH_GRAD}<path d="M4.5 14v-2.5a7.5 7.5 0 0 1 15 0V14" fill="none" stroke="url(#gg)" stroke-width="2" stroke-linecap="round"/><rect x="3.4" y="12.4" width="4" height="6.6" rx="2" fill="url(#gg)"/><rect x="16.6" y="12.4" width="4" height="6.6" rx="2" fill="url(#gg)"/><path d="M18.6 19c0 1.6-2 2.4-5 2.4" fill="none" stroke="url(#gg)" stroke-width="1.6" stroke-linecap="round"/></svg>`,
+};
+
+/* ===================== Общие элементы ===================== */
+function islandHTML(label) {
+  return `
+  <div class="island"><div class="island-inner">
+    <div class="island-left">${ICONS.shield}<b>EnterVPN</b></div>
+    <div class="island-right"><div class="live-dot"></div><span>${label}</span><div class="bars"><i></i><i></i><i></i><i></i></div></div>
+  </div></div>`;
+}
+function titleHTML(text) {
+  const chars = [...text].map((c) => `<span class="ch">${c === " " ? "&nbsp;" : c}</span>`).join("");
+  return `<div class="title-wrap"><div class="title">${chars}</div></div>`;
+}
+
+/** Общая «режиссура» каждой сцены: остров, заголовок, уход в конце (бесшовная петля). */
+function common(t, T, { islandW, titleStart = 0.45, moveAt = 1.9, titleScale = 0.6, titleShift = -152 }) {
+  // Dynamic Island: раскрытие пружиной и схлопывание перед петлёй
+  const close = easeInOut(prog(t, T - 0.55, 0.45));
+  const k = clamp(spring(t - 0.08, 1.25, 0.72), 0, 1.08) * (1 - close);
+  const isl = $(".island");
+  css(isl, { width: `${lerp(126, islandW, k).toFixed(1)}px`, height: `${lerp(37, 46, Math.min(k, 1)).toFixed(1)}px`, top: `${lerp(20, 18, Math.min(k, 1)).toFixed(1)}px` });
+  const inner = $(".island-inner");
+  const io = clamp((k - 0.55) / 0.4);
+  css(inner, { opacity: io.toFixed(3), filter: blur((1 - io) * 6) });
+  $$(".bars i").forEach((b, i) => {
+    const h = 5 + Math.abs(Math.sin((2 * Math.PI * (3 + i) * t) / T + i * 1.3)) * 12;
+    b.style.height = `${h.toFixed(1)}px`;
+  });
+  $(".island .live-dot").style.opacity = (0.65 + 0.35 * Math.cos((2 * Math.PI * 4 * t) / T)).toFixed(3);
+
+  // Заголовок: побуквенное появление, затем переезд наверх
+  $$(".title .ch").forEach((el, i) => reveal(el, t, titleStart + i * 0.032, { dy: 44, blurPx: 16, dur: 0.7, scaleFrom: 0.9 }));
+  const m = spring(t - moveAt, 1.05, 0.86);
+  css($(".title-wrap"), { transform: `translateY(${(m * titleShift).toFixed(2)}px) scale(${lerp(1, titleScale, m).toFixed(4)})` });
+
+  // Уход: всё растворяется к кадру, совпадающему с первым
+  const out = easeInOut(prog(t, T - 0.7, 0.5));
+  css($("#content"), { opacity: (1 - out).toFixed(3), filter: blur(out * 10), transform: `scale(${(1 - out * 0.025).toFixed(4)})` });
+  // остров живёт вне ухода контента
+  isl.style.opacity = 1;
+}
+
+function sheen(el, t, start, dur = 0.9) {
+  const x = easeInOut(prog(t, start, dur));
+  css(el, { left: `${lerp(-40, 120, x).toFixed(2)}%`, opacity: x > 0 && x < 1 ? 1 : 0 });
+}
+
+/* ===================== Сцены ===================== */
+const SCENES = {
+  /* ---------- 1. Добро пожаловать → клиенты ---------- */
+  welcome: {
+    duration: 7.0,
+    still: 4.4,
+    build: () => `
+      ${titleHTML("Добро пожаловать")}
+      <div class="subtitle">Одна ссылка-подписка — вставьте её в приложение, и VPN работает</div>
+      <div class="glass dock">
+        <div class="dock-head"><b>Куда подключить</b><span>До 5 устройств на одну подписку</span></div>
+        <div class="hairline" style="top:70px"></div>
+        <div class="apps">
+          ${[
+            ["apple", "iPhone", "Streisand · v2rayTun"],
+            ["android", "Android", "v2rayNG · Hiddify"],
+            ["windows", "Windows", "Hiddify · v2rayN"],
+            ["mac", "macOS", "Hiddify · FoXray"],
+          ].map(([ic, name, cl]) => `
+            <div class="app"><div class="icon">${ICONS[ic]}</div><div class="app-name">${name}</div><div class="app-clients">${cl}</div></div>`).join("")}
+        </div>
+        <div class="sheen"></div>
+      </div>
+      <div class="chip"><div class="live-dot"></div><b>Пробный доступ</b><span>3 дня · 10 ГБ · бесплатно</span></div>`,
+    island: "VLESS · Reality",
+    islandW: 392,
+    update(t, T) {
+      common(t, T, { islandW: this.islandW, moveAt: 2.0 });
+      reveal($(".subtitle"), t, 2.35, { dy: 16, blurPx: 8 });
+      const dock = $(".dock");
+      const d = spring(t - 2.5, 1.2, 0.8);
+      css(dock, {
+        opacity: easeOut(prog(t, 2.5, 0.45)).toFixed(3),
+        filter: blur((1 - easeOut(prog(t, 2.5, 0.5))) * 14),
+        transform: `translateY(${((1 - d) * 70).toFixed(2)}px) scale(${lerp(0.96, 1, d).toFixed(4)})`,
+      });
+      reveal($(".dock-head"), t, 2.75, { dy: 10, blurPx: 6 });
+      $$(".app").forEach((app, i) => {
+        const s0 = 2.9 + i * 0.13;
+        const icon = $(".icon", app);
+        const pop = spring(t - s0, 1.7, 0.55);
+        css(icon, {
+          opacity: easeOut(prog(t, s0, 0.25)).toFixed(3),
+          transform: `scale(${lerp(0.3, 1, pop).toFixed(4)})`,
+          filter: blur((1 - easeOut(prog(t, s0, 0.35))) * 10),
+        });
+        reveal($(".app-name", app), t, s0 + 0.12, { dy: 12, blurPx: 6 });
+        reveal($(".app-clients", app), t, s0 + 0.2, { dy: 10, blurPx: 6 });
+      });
+      reveal($(".chip"), t, 3.75, { dy: 18, blurPx: 8 });
+      $(".chip").style.transform = `translateX(-50%) ${$(".chip").style.transform}`;
+      sheen($(".dock .sheen"), t, 4.6, 1.0);
+    },
+  },
+
+  /* ---------- 2. Тарифы ---------- */
+  plans: {
+    duration: 7.0,
+    still: 4.3,
+    island: "Оплата · автовыдача",
+    islandW: 404,
+    build: () => {
+      const ring = (id) => `
+        <svg class="ring" viewBox="0 0 84 84">
+          <circle cx="42" cy="42" r="36" fill="none" stroke="rgba(255,255,255,.09)" stroke-width="7"/>
+          <circle id="${id}" cx="42" cy="42" r="36" fill="none" stroke="#e9eef5" stroke-width="7" stroke-linecap="round" transform="rotate(-90 42 42)" stroke-dasharray="0 999"/>
+        </svg>`;
+      return `
+      ${titleHTML("Тарифы")}
+      <div class="subtitle">Оплата и выдача ссылки — автоматически, прямо в боте</div>
+      <div class="glass card card-1">
+        <div class="card-label"><b>1 месяц</b><span>30 дней</span></div>
+        ${ring("r1")}<div class="ring-text" style="left:auto;right:30px;top:26px;width:84px;height:84px;position:absolute">100 ГБ</div>
+        <div class="price"><b id="p1">0 ₽</b><span>за 30 дней</span></div>
+        <div class="hairline" style="top:222px"></div>
+        <div class="feats"><span>100 ГБ трафика</span><i>·</i><span>До 5 устройств</span></div>
+        <div class="sheen"></div>
+      </div>
+      <div class="glass card card-2">
+        <div class="card-label"><b>3 месяца</b><div class="badge">−10%</div></div>
+        ${ring("r2")}<div class="ring-text" style="left:auto;right:30px;top:26px;width:84px;height:84px;position:absolute">400 ГБ</div>
+        <div class="price"><b id="p2">0 ₽</b><span>≈ 116 ₽ в месяц</span></div>
+        <div class="hairline" style="top:222px"></div>
+        <div class="feats"><span>400 ГБ трафика</span><i>·</i><span>До 5 устройств</span></div>
+        <div class="sheen"></div>
+      </div>
+      <div class="chip"><div class="live-dot"></div><b>Продление</b><span>дни прибавляются к текущему сроку</span></div>`;
+    },
+    update(t, T) {
+      common(t, T, { islandW: this.islandW, moveAt: 1.6 });
+      reveal($(".subtitle"), t, 1.95, { dy: 16, blurPx: 8 });
+      [[".card-1", 2.1, "p1", 130, "r1", 0.25], [".card-2", 2.28, "p2", 350, "r2", 1.0]].forEach(([sel, s0, pid, price, rid, fill]) => {
+        const card = $(sel);
+        const d = spring(t - s0, 1.2, 0.8);
+        css(card, {
+          opacity: easeOut(prog(t, s0, 0.45)).toFixed(3),
+          filter: blur((1 - easeOut(prog(t, s0, 0.5))) * 14),
+          transform: `translateY(${((1 - d) * 80).toFixed(2)}px) scale(${lerp(0.95, 1, d).toFixed(4)})`,
+        });
+        const c = easeOut(prog(t, s0 + 0.35, 1.1));
+        $("#" + pid).textContent = `${Math.round(price * c)} ₽`;
+        const circ = 2 * Math.PI * 36;
+        const f = easeInOut(prog(t, s0 + 0.5, 1.2)) * (fill === 1 ? 0.999 : 0.25) * circ;
+        $("#" + rid).setAttribute("stroke-dasharray", `${f.toFixed(2)} 999`);
+        $("#" + rid).style.opacity = f > 0.5 ? 1 : 0;
+        reveal($(".badge", card) || document.createElement("i"), t, s0 + 0.9, { dy: 6, blurPx: 4, scaleFrom: 0.6 });
+        sheen($(".sheen", card), t, 4.5 + (s0 - 2.1), 1.0);
+      });
+      reveal($(".chip"), t, 3.4, { dy: 18, blurPx: 8 });
+      $(".chip").style.transform = `translateX(-50%) ${$(".chip").style.transform}`;
+    },
+  },
+
+  /* ---------- 3. Поддержка (основной бот) ---------- */
+  support: {
+    duration: 7.6,
+    still: 5.35,
+    island: "Оператор онлайн",
+    islandW: 378,
+    subtitle: "Отдельный бот с тикетами — отвечает живой оператор",
+    chip: `<div class="live-dot"></div><b>@EnterseviceSupport_bot</b><span>настройка · оплата · перенос подписки</span>`,
+    build() {
+      return `
+      ${titleHTML("Поддержка")}
+      <div class="subtitle">${this.subtitle}</div>
+      <div class="glass chat">
+        <div class="chat-head">
+          <div class="icon avatar">${ICONS.headset}</div>
+          <div class="who"><b>Поддержка EnterVPN</b><span><div class="live-dot"></div>Оператор на связи</span></div>
+          <div class="ticket">Тикет #108</div>
+        </div>
+        <div class="hairline" style="top:88px"></div>
+        <div class="bubble out">Как добавить подписку в Hiddify на iPhone?</div>
+        <div class="meta">Доставлено</div>
+        <div class="typing"><i></i><i></i><i></i></div>
+        <div class="bubble in">Скопируйте ссылку в «Моя подписка», затем в Hiddify:<br>«+» → «Добавить из буфера». <span class="ok">Готово ✓</span></div>
+        <div class="sheen"></div>
+      </div>
+      <div class="chip">${this.chip}</div>`;
+    },
+    update(t, T) {
+      common(t, T, { islandW: this.islandW, moveAt: 1.75 });
+      reveal($(".subtitle"), t, 2.1, { dy: 16, blurPx: 8 });
+      const chat = $(".chat");
+      const d = spring(t - 2.25, 1.2, 0.8);
+      css(chat, {
+        opacity: easeOut(prog(t, 2.25, 0.45)).toFixed(3),
+        filter: blur((1 - easeOut(prog(t, 2.25, 0.5))) * 14),
+        transform: `translateY(${((1 - d) * 70).toFixed(2)}px) scale(${lerp(0.96, 1, d).toFixed(4)})`,
+      });
+      reveal($(".chat-head"), t, 2.5, { dy: 10, blurPx: 6 });
+      // Отправленное сообщение — «выстреливает» пружиной из угла, как в iMessage
+      const so = 2.95;
+      const sp = spring(t - so, 1.6, 0.62);
+      css($(".bubble.out"), { opacity: easeOut(prog(t, so, 0.2)).toFixed(3), transform: `translateY(${((1 - sp) * 24).toFixed(2)}px) scale(${lerp(0.5, 1, sp).toFixed(4)})` });
+      reveal($(".meta"), t, so + 0.45, { dy: 4, blurPx: 3 });
+      // Индикатор набора
+      const ty0 = 3.55, ty1 = 4.6;
+      const tin = spring(t - ty0, 1.8, 0.65);
+      const tout = easeInOut(prog(t, ty1, 0.18));
+      css($(".typing"), { opacity: (easeOut(prog(t, ty0, 0.15)) * (1 - tout)).toFixed(3), transform: `scale(${(lerp(0.4, 1, tin) * (1 - tout * 0.3)).toFixed(4)})` });
+      $$(".typing i").forEach((dot, i) => {
+        const ph = ((t - ty0) * 2.4 - i * 0.18) % 1;
+        const up = ph > 0 && ph < 0.4 ? Math.sin((ph / 0.4) * Math.PI) : 0;
+        css(dot, { transform: `translateY(${(-up * 5).toFixed(2)}px)`, opacity: (0.45 + up * 0.55).toFixed(3) });
+      });
+      // Ответ оператора
+      const ri = ty1 + 0.08;
+      const rp = spring(t - ri, 1.5, 0.66);
+      css($(".bubble.in"), { opacity: easeOut(prog(t, ri, 0.2)).toFixed(3), transform: `translateY(${((1 - rp) * 20).toFixed(2)}px) scale(${lerp(0.55, 1, rp).toFixed(4)})` });
+      reveal($(".chip"), t, 3.3, { dy: 18, blurPx: 8 });
+      $(".chip").style.transform = `translateX(-50%) ${$(".chip").style.transform}`;
+      sheen($(".chat .sheen"), t, 5.6, 1.0);
+    },
+  },
+};
+
+/* ---------- 4. Поддержка (отдельный бот поддержки) ---------- */
+SCENES.supbot = Object.assign(Object.create(SCENES.support), {
+  island: "Тикеты · 24/7",
+  islandW: 350,
+  subtitle: "Напишите вопрос одним сообщением — тикет создастся сам",
+  chip: `<div class="live-dot"></div><b>Ответ здесь же</b><span>без автоответчиков — пишет человек</span>`,
+});
+
+/* ===================== Запуск ===================== */
+const params = new URLSearchParams(location.search);
+const scene = SCENES[params.get("scene") || "welcome"];
+const content = document.getElementById("content");
+content.innerHTML = islandHTML(scene.island) + scene.build();
+// остров не должен растворяться вместе с контентом — выносим его на уровень сцены
+document.getElementById("stage").appendChild(document.querySelector(".island"));
+
+window.SCENE = { duration: scene.duration, still: scene.still };
+window.renderAt = (t) => scene.update(t, scene.duration);
+window.renderAt(0);
+
+if (params.get("preview")) {
+  const bar = document.createElement("div");
+  bar.id = "preview-bar";
+  document.body.appendChild(bar);
+  const t0 = performance.now();
+  const loop = () => {
+    const t = ((performance.now() - t0) / 1000) % scene.duration;
+    window.renderAt(t);
+    bar.textContent = `t = ${t.toFixed(2)} / ${scene.duration}s`;
+    requestAnimationFrame(loop);
+  };
+  loop();
+}
+</script>
+</body>
+</html>
